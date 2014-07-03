@@ -4,6 +4,7 @@
 #include "effects/native/flangereffect.h"
 #include "effects/native/bitcrushereffect.h"
 #include "effects/native/eqdefault.h"
+#include "effects/native/ffteqeffect.h"
 #include "effects/native/filtereffect.h"
 #include "effects/native/reverbeffect.h"
 #include "effects/native/echoeffect.h"
@@ -16,6 +17,7 @@ NativeBackend::NativeBackend(QObject* pParent)
     registerEffect<ReverbEffect>();
     registerEffect<EchoEffect>();
     registerEffect<EQDefault>();
+    registerEffect<FFTEQEffect>();
 }
 
 NativeBackend::~NativeBackend() {
