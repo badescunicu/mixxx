@@ -15,9 +15,9 @@ http://sam.zoy.org/wtfpl/COPYING for more details.
 
 
 
-#if defined (ffft_FFTReal_CURRENT_CODEHEADER)
-	#error Recursive inclusion of FFTReal code header.
-#endif
+//#if defined (ffft_FFTReal_CURRENT_CODEHEADER)
+//	#error Recursive inclusion of FFTReal code header.
+//#endif
 #define	ffft_FFTReal_CURRENT_CODEHEADER
 
 #if ! defined (ffft_FFTReal_CODEHEADER_INCLUDED)
@@ -29,6 +29,7 @@ http://sam.zoy.org/wtfpl/COPYING for more details.
 
 #include	<cassert>
 #include	<cmath>
+#include "FFTReal.h"
 
 
 
