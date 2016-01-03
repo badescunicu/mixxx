@@ -30,9 +30,9 @@ EffectManifest GraphicEQEffect2::getManifest() {
     low->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
     low->setUnitsHint(EffectManifestParameter::UNITS_UNKNOWN);
     low->setNeutralPointOnScale(0.5);
-    low->setDefault(0);
-    low->setMinimum(-12);
-    low->setMaximum(12);
+    low->setDefault(1.0);
+    low->setMinimum(0);
+    low->setMaximum(4.0);
 
     QString paramName;
     for (int i = 0; i < 6; i++) {
@@ -50,9 +50,9 @@ EffectManifest GraphicEQEffect2::getManifest() {
         mid->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
         mid->setUnitsHint(EffectManifestParameter::UNITS_UNKNOWN);
         mid->setNeutralPointOnScale(0.5);
-        mid->setDefault(0);
-        mid->setMinimum(-12);
-        mid->setMaximum(12);
+        mid->setDefault(1.0);
+        mid->setMinimum(0);
+        mid->setMaximum(4.0);
     }
 
     EffectManifestParameter* high = manifest.addParameter();
@@ -62,9 +62,9 @@ EffectManifest GraphicEQEffect2::getManifest() {
     high->setControlHint(EffectManifestParameter::CONTROL_KNOB_LINEAR);
     high->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
     high->setUnitsHint(EffectManifestParameter::UNITS_UNKNOWN);
-    high->setDefault(0);
-    high->setMinimum(-12);
-    high->setMaximum(12);
+    high->setDefault(1.0);
+    high->setMinimum(0);
+    high->setMaximum(4.0);
 
     return manifest;
 }
@@ -76,6 +76,12 @@ GraphicEQEffect2GroupState::GraphicEQEffect2GroupState() {
     }
     m_oldHigh = 0;
 
+    m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
+    m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
+    m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
+    m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
+    m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
+    m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
     m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
     m_pBufs.append(SampleUtil::alloc(MAX_BUFFER_LEN));
 
@@ -116,8 +122,8 @@ void GraphicEQEffect2GroupState::setFilters(int sampleRate) {
     m_low->setFrequencyCorners(sampleRate, m_centerFrequencies[0]);
     m_high->setFrequencyCorners(sampleRate, m_centerFrequencies[7]);
     for (int i = 0; i < 6; i++) {
-        m_bands[i]->setFrequencyCorners(sampleRate, m_centerFrequencies[i],
-                m_centerFrequencies[i + 1]);
+        m_bands[i]->setFrequencyCorners(sampleRate, m_centerFrequencies[i + 1],
+                m_centerFrequencies[i + 2]);
     }
 }
 
@@ -156,78 +162,33 @@ void GraphicEQEffect2::processChannel(const ChannelHandle& handle,
     float fMid[6];
     float fHigh;
 
-    if (enableState == EffectProcessor::DISABLING) {
-         // Ramp to dry, when disabling, this will ramp from dry when enabling as well
-        fLow = 1.0;
-        fHigh = 1.0;;
-        for (int i = 0; i < 6; i++) {
-            fMid[i] = 1.0;
-        }
-    } else {
-        fLow = m_pPotLow->value();
-        fHigh = m_pPotHigh->value();
-        for (int i = 0; i < 6; i++) {
-            fMid[i] = m_pPotMid[i]->value();
-        }
-    }
-
-
-    if (fLow != pState->m_oldLow) {
-        pState->m_low->setFrequencyCorners(sampleRate,
-                                           pState->m_centerFrequencies[0]);
-    }
-    if (fHigh != pState->m_oldHigh) {
-        pState->m_high->setFrequencyCorners(sampleRate,
-                                            pState->m_centerFrequencies[7]);
-    }
+    fLow = m_pPotLow->value();
+    fHigh = m_pPotHigh->value();
     for (int i = 0; i < 6; i++) {
-        if (fMid[i] != pState->m_oldMid[i]) {
-            pState->m_bands[i]->setFrequencyCorners(sampleRate,
-                                                    pState->m_centerFrequencies[i],
-                                                    pState->m_centerFrequencies[i + 1]);
-        }
+        fMid[i] = m_pPotMid[i]->value();
     }
+
 
     int bufIndex = 0;
-    if (fLow) {
-        pState->m_low->process(pInput, pState->m_pBufs[1 - bufIndex], numSamples);
-        bufIndex = 1 - bufIndex;
-    } else {
-        pState->m_low->pauseFilter();
-        SampleUtil::copy(pState->m_pBufs[bufIndex], pInput, numSamples);
-    }
+    pState->m_low->process(pInput, pState->m_pBufs[0], numSamples);
 
     for (int i = 0; i < 6; i++) {
-        if (fMid[i]) {
-            pState->m_bands[i]->process(pState->m_pBufs[bufIndex],
-                                        pState->m_pBufs[1 - bufIndex], numSamples);
-            bufIndex = 1 - bufIndex;
-        } else {
-            pState->m_bands[i]->pauseFilter();
-        }
+        pState->m_bands[i]->process(pInput,
+                                    pState->m_pBufs[i + 1], numSamples);
     }
 
-    if (fHigh) {
-        pState->m_high->process(pState->m_pBufs[bufIndex],
-                                pOutput, numSamples);
-        bufIndex = 1 - bufIndex;
-    } else {
-        SampleUtil::copy(pOutput, pState->m_pBufs[bufIndex], numSamples);
-        pState->m_high->pauseFilter();
-    }
+    pState->m_high->process(pInput,
+                            pState->m_pBufs[7], numSamples);
 
-
-    pState->m_oldLow = fLow;
-    pState->m_oldHigh = fHigh;
-    for (int i = 0; i < 6; i++) {
-        pState->m_oldMid[i] = fMid[i];
-    }
-
-    if (enableState == EffectProcessor::DISABLING) {
-        pState->m_low->pauseFilter();
-        pState->m_high->pauseFilter();
-        for (int i = 0; i < 6; i++) {
-            pState->m_bands[i]->pauseFilter();
-        }
-    }
+    SampleUtil::copy8WithGain(pOutput,
+            pState->m_pBufs[0], fLow,
+            pState->m_pBufs[1], fMid[0],
+            pState->m_pBufs[2], fMid[1],
+            pState->m_pBufs[3], fMid[2],
+            pState->m_pBufs[4], fMid[3],
+            pState->m_pBufs[5], fMid[4],
+            pState->m_pBufs[6], fMid[5],
+            pState->m_pBufs[7], fHigh,
+            numSamples
+    );
 }
