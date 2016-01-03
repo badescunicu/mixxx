@@ -7,6 +7,7 @@
 #include "effects/native/bessel8lvmixeqeffect.h"
 #include "effects/native/bessel4lvmixeqeffect.h"
 #include "effects/native/graphiceqeffect.h"
+#include "effects/native/graphiceqeffect2.h"
 #include "effects/native/filtereffect.h"
 #include "effects/native/moogladder4filtereffect.h"
 #ifndef __MACAPPSTORE__
@@ -25,6 +26,7 @@ NativeBackend::NativeBackend(QObject* pParent)
     registerEffect<LinkwitzRiley8EQEffect>();
     // Compensations EQs    
     registerEffect<GraphicEQEffect>();
+    registerEffect<GraphicEQEffect2>();
     // Fading Effcts
     registerEffect<FilterEffect>();
     registerEffect<MoogLadder4FilterEffect>();
