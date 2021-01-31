@@ -4,18 +4,18 @@
 #include <QSharedPointer>
 #include <QDomDocument>
 
-#include "util.h"
+#include "engine/channelhandle.h"
+#include "engine/engine.h"
 #include "effects/effectmanifest.h"
 #include "effects/effectparameter.h"
 #include "effects/effectinstantiator.h"
+#include "util/class.h"
 
+class EffectState;
 class EffectProcessor;
 class EngineEffectChain;
 class EngineEffect;
 class EffectsManager;
-
-class Effect;
-typedef QSharedPointer<Effect> EffectPointer;
 
 // The Effect class is the main-thread representation of an instantiation of an
 // effect. This class is NOT thread safe and must only be used by the main
@@ -24,17 +24,28 @@ typedef QSharedPointer<Effect> EffectPointer;
 class Effect : public QObject {
     Q_OBJECT
   public:
-    Effect(QObject* pParent, EffectsManager* pEffectsManager,
-           const EffectManifest& manifest,
+    typedef bool (*ParameterFilterFnc)(EffectParameter*);
+
+    Effect(EffectsManager* pEffectsManager,
+           EffectManifestPointer pManifest,
            EffectInstantiatorPointer pInstantiator);
     virtual ~Effect();
 
-    const EffectManifest& getManifest() const;
+    EffectState* createState(const mixxx::EngineParameters& bufferParameters);
+
+    EffectManifestPointer getManifest() const;
 
     unsigned int numKnobParameters() const;
     unsigned int numButtonParameters() const;
+
+    static bool isButtonParameter(EffectParameter* parameter);
+    static bool isKnobParameter(EffectParameter* parameter);
+
+    EffectParameter* getFilteredParameterForSlot(
+            ParameterFilterFnc filterFnc, unsigned int slotNumber);
     EffectParameter* getKnobParameterForSlot(unsigned int slotNumber);
     EffectParameter* getButtonParameterForSlot(unsigned int slotNumber);
+
     EffectParameter* getParameterById(const QString& id) const;
     EffectParameter* getButtonParameterById(const QString& id) const;
 
@@ -43,26 +54,29 @@ class Effect : public QObject {
 
     EngineEffect* getEngineEffect();
 
-    void addToEngine(EngineEffectChain* pChain, int iIndex);
+    void addToEngine(EngineEffectChain* pChain, int iIndex,
+                     const QSet<ChannelHandleAndGroup>& activeInputChannels);
     void removeFromEngine(EngineEffectChain* pChain, int iIndex);
     void updateEngineState();
 
-    QDomElement toXML(QDomDocument* doc) const;
-    static EffectPointer fromXML(EffectsManager* pEffectsManager,
+    static EffectPointer createFromXml(EffectsManager* pEffectsManager,
                                  const QDomElement& element);
+
+    double getMetaknobDefault();
 
   signals:
     void enabledChanged(bool enabled);
 
   private:
     QString debugString() const {
-        return QString("Effect(%1)").arg(m_manifest.name());
+        return QString("Effect(%1)").arg(m_pManifest->name());
     }
 
     void sendParameterUpdate();
 
     EffectsManager* m_pEffectsManager;
-    EffectManifest m_manifest;
+    EffectManifestPointer m_pManifest;
+    EffectInstantiatorPointer m_pInstantiator;
     EngineEffect* m_pEngineEffect;
     bool m_bAddedToEngine;
     bool m_bEnabled;

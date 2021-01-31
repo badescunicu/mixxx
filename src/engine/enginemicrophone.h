@@ -4,15 +4,16 @@
 #ifndef ENGINEMICROPHONE_H
 #define ENGINEMICROPHONE_H
 
-#include "controlobjectslave.h"
-#include "controlpushbutton.h"
+#include <QScopedPointer>
+
+#include "control/controlproxy.h"
+#include "control/controlpushbutton.h"
 #include "engine/enginechannel.h"
 #include "engine/enginevumeter.h"
 #include "util/circularbuffer.h"
 
-#include "soundmanagerutil.h"
+#include "soundio/soundmanagerutil.h"
 
-class EffectsManager;
 class EngineEffectsManager;
 class ControlAudioTaperPot;
 
@@ -21,13 +22,15 @@ class ControlAudioTaperPot;
 class EngineMicrophone : public EngineChannel, public AudioDestination {
     Q_OBJECT
   public:
-    EngineMicrophone(const char* pGroup, EffectsManager* pEffectsManager);
+    EngineMicrophone(const ChannelHandleAndGroup& handle_group,
+                     EffectsManager* pEffectsManager);
     virtual ~EngineMicrophone();
 
     bool isActive();
 
     // Called by EngineMaster whenever is requesting a new buffer of audio.
     virtual void process(CSAMPLE* pOutput, const int iBufferSize);
+    virtual void collectFeatures(GroupFeatureState* pGroupFeatures) const;
     virtual void postProcess(const int iBufferSize) { Q_UNUSED(iBufferSize) }
 
     // This is called by SoundManager whenever there are new samples from the
@@ -50,12 +53,8 @@ class EngineMicrophone : public EngineChannel, public AudioDestination {
     double getSoloDamping();
 
   private:
-    EngineEffectsManager* m_pEngineEffectsManager;
-    EngineVuMeter m_vuMeter;
-    ControlObject* m_pEnabled;
+    QScopedPointer<ControlObject> m_pInputConfigured;
     ControlAudioTaperPot* m_pPregain;
-    ControlObjectSlave* m_pSampleRate;
-    const CSAMPLE* volatile m_sampleBuffer;
 
     bool m_wasActive;
 };

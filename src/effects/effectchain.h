@@ -6,8 +6,10 @@
 #include <QList>
 #include <QDomDocument>
 
-#include "util.h"
+#include "effects/defs.h"
+#include "engine/channelhandle.h"
 #include "effects/effect.h"
+#include "util/class.h"
 
 class EffectsManager;
 class EngineEffectRack;
@@ -36,11 +38,11 @@ class EffectChain : public QObject {
     bool enabled() const;
     void setEnabled(bool enabled);
 
-    // Activates EffectChain processing for the provided group.
-    void enableForGroup(const QString& group);
-    bool enabledForGroup(const QString& group) const;
-    const QSet<QString>& enabledGroups() const;
-    void disableForGroup(const QString& group);
+    // Activates EffectChain processing for the provided channel.
+    void enableForInputChannel(const ChannelHandleAndGroup& handle_group);
+    bool enabledForChannel(const ChannelHandleAndGroup& handle_group) const;
+    const QSet<ChannelHandleAndGroup>& enabledChannels() const;
+    void disableForInputChannel(const ChannelHandleAndGroup& handle_group);
 
     EffectChainPointer prototype() const;
 
@@ -55,59 +57,52 @@ class EffectChain : public QObject {
     double mix() const;
     void setMix(const double& dMix);
 
-    enum InsertionType {
-        INSERT = 0,
-        SEND,
-        // The number of insertion types. Also used to represent "unknown".
-        NUM_INSERTION_TYPES
-    };
-    static QString insertionTypeToString(InsertionType type) {
+    static QString insertionTypeToString(EffectChainInsertionType type) {
         switch (type) {
-            case INSERT:
+            case EffectChainInsertionType::Insert:
                 return "INSERT";
-            case SEND:
+            case EffectChainInsertionType::Send:
                 return "SEND";
             default:
                 return "UNKNOWN";
         }
     }
-    static InsertionType insertionTypeFromString(const QString& typeStr) {
+    static EffectChainInsertionType insertionTypeFromString(const QString& typeStr) {
         if (typeStr == "INSERT") {
-            return INSERT;
+            return EffectChainInsertionType::Insert;
         } else if (typeStr == "SEND") {
-            return SEND;
+            return EffectChainInsertionType::Send;
         } else {
-            return NUM_INSERTION_TYPES;
+            return EffectChainInsertionType::Num_Insertion_Types;
         }
     }
 
-    InsertionType insertionType() const;
-    void setInsertionType(InsertionType type);
+    EffectChainInsertionType insertionType() const;
+    void setInsertionType(EffectChainInsertionType type);
 
     void addEffect(EffectPointer pEffect);
-    void removeEffect(EffectPointer pEffect);
-    void replaceEffect(unsigned int iEffectNumber, EffectPointer pEffect);
-    EffectPointer getEffect(unsigned int i) const;
+    void replaceEffect(unsigned int effectSlotNumber, EffectPointer pEffect);
+    void removeEffect(unsigned int effectSlotNumber);
+    void refreshAllEffects();
+
     const QList<EffectPointer>& effects() const;
     unsigned int numEffects() const;
 
     EngineEffectChain* getEngineEffectChain();
 
-    QDomElement toXML(QDomDocument* doc) const;
-    static EffectChainPointer fromXML(EffectsManager* pEffectsManager,
+    static EffectChainPointer createFromXml(EffectsManager* pEffectsManager,
                                       const QDomElement& element);
     static EffectChainPointer clone(EffectChainPointer pChain);
 
   signals:
     // Signal that indicates that an effect has been added or removed.
-    void effectAdded();
-    void effectRemoved();
+    void effectChanged(unsigned int effectSlotNumber);
     void nameChanged(const QString& name);
     void descriptionChanged(const QString& name);
     void enabledChanged(bool enabled);
     void mixChanged(double v);
-    void insertionTypeChanged(EffectChain::InsertionType type);
-    void groupStatusChanged(const QString& group, bool enabled);
+    void insertionTypeChanged(EffectChainInsertionType type);
+    void channelStatusChanged(const QString& group, bool enabled);
 
   private:
     QString debugString() const {
@@ -123,10 +118,10 @@ class EffectChain : public QObject {
     QString m_id;
     QString m_name;
     QString m_description;
-    InsertionType m_insertionType;
+    EffectChainInsertionType m_insertionType;
     double m_dMix;
 
-    QSet<QString> m_enabledGroups;
+    QSet<ChannelHandleAndGroup> m_enabledInputChannels;
     QList<EffectPointer> m_effects;
     EngineEffectChain* m_pEngineEffectChain;
     bool m_bAddedToEngine;

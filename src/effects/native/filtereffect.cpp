@@ -1,157 +1,183 @@
 #include "effects/native/filtereffect.h"
 #include "util/math.h"
 
+namespace {
+const double kMinCorner = 13; // Hz
+const double kMaxCorner = 22050; // Hz
+} // anonymous namespace
+
 // static
 QString FilterEffect::getId() {
     return "org.mixxx.effects.filter";
 }
 
 // static
-EffectManifest FilterEffect::getManifest() {
-    EffectManifest manifest;
-    manifest.setId(getId());
-    manifest.setName(QObject::tr("Filter"));
-    manifest.setAuthor("The Mixxx Team");
-    manifest.setVersion("1.0");
-    manifest.setDescription("TODO");
+EffectManifestPointer FilterEffect::getManifest() {
+    EffectManifestPointer pManifest(new EffectManifest());
+    pManifest->setId(getId());
+    pManifest->setName(QObject::tr("Filter"));
+    pManifest->setShortName(QObject::tr("Filter"));
+    pManifest->setAuthor("The Mixxx Team");
+    pManifest->setVersion("1.0");
+    pManifest->setDescription(QObject::tr(
+        "Allows only high or low frequencies to play."));
+    pManifest->setEffectRampsFromDry(true);
 
-    EffectManifestParameter* depth = manifest.addParameter();
-    depth->setId("depth");
-    depth->setName(QObject::tr("Depth"));
-    depth->setDescription("TODO");
-    depth->setControlHint(EffectManifestParameter::CONTROL_KNOB_LINEAR);
-    depth->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
-    depth->setUnitsHint(EffectManifestParameter::UNITS_UNKNOWN);
-    depth->setDefaultLinkType(EffectManifestParameter::LINK_LINKED);
-    depth->setNeutralPointOnScale(0.5);
-    depth->setDefault(0.0);
-    depth->setMinimum(-1.0);
-    depth->setMaximum(1.0);
+    EffectManifestParameterPointer lpf = pManifest->addParameter();
+    lpf->setId("lpf");
+    lpf->setName(QObject::tr("Low Pass Filter Cutoff"));
+    lpf->setShortName(QObject::tr("LPF"));
+    lpf->setDescription(QObject::tr(
+        "Corner frequency ratio of the low pass filter"));
+    lpf->setControlHint(EffectManifestParameter::ControlHint::KNOB_LOGARITHMIC);
+    lpf->setSemanticHint(EffectManifestParameter::SemanticHint::UNKNOWN);
+    lpf->setUnitsHint(EffectManifestParameter::UnitsHint::HERTZ);
+    lpf->setDefaultLinkType(EffectManifestParameter::LinkType::LINKED_LEFT);
+    lpf->setNeutralPointOnScale(1);
+    lpf->setDefault(kMaxCorner);
+    lpf->setMinimum(kMinCorner);
+    lpf->setMaximum(kMaxCorner);
 
-    EffectManifestParameter* bandpass_width = manifest.addParameter();
-    bandpass_width->setId("bandpass_width");
-    bandpass_width->setName(QObject::tr("Bandpass Width"));
-    bandpass_width->setDescription("TODO");
-    bandpass_width->setControlHint(EffectManifestParameter::CONTROL_KNOB_LINEAR);
-    bandpass_width->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
-    bandpass_width->setUnitsHint(EffectManifestParameter::UNITS_SAMPLERATE);
-    bandpass_width->setDefault(0.01);
-    bandpass_width->setMinimum(0.001);
-    bandpass_width->setMaximum(0.01);
+    EffectManifestParameterPointer q = pManifest->addParameter();
+    q->setId("q");
+    q->setName(QObject::tr("Resonance"));
+    q->setShortName(QObject::tr("Q"));
+    q->setDescription(QObject::tr(
+        "Resonance of the filters\n"
+        "Default: flat top")); // What does this mean?
+    q->setControlHint(EffectManifestParameter::ControlHint::KNOB_LOGARITHMIC);
+    q->setSemanticHint(EffectManifestParameter::SemanticHint::UNKNOWN);
+    q->setUnitsHint(EffectManifestParameter::UnitsHint::SAMPLERATE);
+    q->setDefault(0.707106781); // 0.707106781 = Butterworth
+    q->setMinimum(0.4);
+    q->setMaximum(4.0);
 
-    EffectManifestParameter* bandpass_gain = manifest.addParameter();
-    bandpass_gain->setId("bandpass_gain");
-    bandpass_gain->setName(QObject::tr("Bandpass Gain"));
-    bandpass_gain->setDescription("TODO");
-    bandpass_gain->setControlHint(EffectManifestParameter::CONTROL_KNOB_LINEAR);
-    bandpass_gain->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
-    bandpass_gain->setUnitsHint(EffectManifestParameter::UNITS_SAMPLERATE);
-    bandpass_gain->setDefault(0.3);
-    bandpass_gain->setMinimum(0.0);
-    bandpass_gain->setMaximum(1.0);
+    EffectManifestParameterPointer hpf = pManifest->addParameter();
+    hpf->setId("hpf");
+    hpf->setName(QObject::tr("High Pass Filter Cutoff"));
+    hpf->setShortName(QObject::tr("HPF"));
+    hpf->setDescription(QObject::tr(
+        "Corner frequency ratio of the high pass filter"));
+    hpf->setControlHint(EffectManifestParameter::ControlHint::KNOB_LOGARITHMIC);
+    hpf->setSemanticHint(EffectManifestParameter::SemanticHint::UNKNOWN);
+    hpf->setUnitsHint(EffectManifestParameter::UnitsHint::HERTZ);
+    hpf->setDefaultLinkType(EffectManifestParameter::LinkType::LINKED_RIGHT);
+    hpf->setNeutralPointOnScale(0.0);
+    hpf->setDefault(kMinCorner);
+    hpf->setMinimum(kMinCorner);
+    hpf->setMaximum(kMaxCorner);
 
-    return manifest;
+    return pManifest;
 }
 
-FilterEffect::FilterEffect(EngineEffect* pEffect,
-                           const EffectManifest& manifest)
-        : m_pDepthParameter(pEffect->getParameterById("depth")),
-          m_pBandpassWidthParameter(
-              pEffect->getParameterById("bandpass_width")),
-          m_pBandpassGainParameter(
-              pEffect->getParameterById("bandpass_gain")) {
-    Q_UNUSED(manifest);
+FilterGroupState::FilterGroupState(const mixxx::EngineParameters& bufferParameters)
+        : EffectState(bufferParameters),
+          m_loFreq(kMaxCorner / bufferParameters.sampleRate()),
+          m_q(0.707106781),
+          m_hiFreq(kMinCorner / bufferParameters.sampleRate()) {
+    m_buffer = mixxx::SampleBuffer(bufferParameters.samplesPerBuffer());
+    m_pLowFilter = new EngineFilterBiquad1Low(1, m_loFreq, m_q, true);
+    m_pHighFilter = new EngineFilterBiquad1High(1, m_hiFreq, m_q, true);
+}
+
+FilterGroupState::~FilterGroupState() {
+    delete m_pLowFilter;
+    delete m_pHighFilter;
+}
+
+FilterEffect::FilterEffect(EngineEffect* pEffect)
+        : m_pLPF(pEffect->getParameterById("lpf")),
+          m_pQ(pEffect->getParameterById("q")),
+          m_pHPF(pEffect->getParameterById("hpf")) {
 }
 
 FilterEffect::~FilterEffect() {
     //qDebug() << debugString() << "destroyed";
 }
 
-double getLowFrequencyCorner(double depth) {
-    return pow(2.0, 5.0 + depth * 9.0);
-}
-
-double getHighFrequencyCorner(double depth, double bandpassSize) {
-    return pow(2.0, 5.0 + (depth + bandpassSize) * 9.0);
-}
-
-void FilterEffect::processGroup(const QString& group,
-                                FilterGroupState* pState,
-                                const CSAMPLE* pInput, CSAMPLE* pOutput,
-                                const unsigned int numSamples,
-                                const unsigned int sampleRate,
-                                const GroupFeatureState& groupFeatures) {
-    Q_UNUSED(group);
+void FilterEffect::processChannel(const ChannelHandle& handle,
+                                  FilterGroupState* pState,
+                                  const CSAMPLE* pInput, CSAMPLE* pOutput,
+                                  const mixxx::EngineParameters& bufferParameters,
+                                  const EffectEnableState enableState,
+                                  const GroupFeatureState& groupFeatures) {
+    Q_UNUSED(handle);
     Q_UNUSED(groupFeatures);
-    double depth = m_pDepthParameter->value();
-    double bandpass_width = m_pBandpassWidthParameter->value();
-    CSAMPLE bandpass_gain = m_pBandpassGainParameter->value();
 
-    // TODO(rryan) what if bandpass_gain changes?
-    bool parametersChanged = depth != pState->oldDepth ||
-            bandpass_width != pState->oldBandpassWidth;
-    if (parametersChanged) {
-        if (pState->oldDepth == 0.0) {
-            SampleUtil::copyWithGain(
-                pState->crossfadeBuffer, pInput, 1.0, numSamples);
-        } else if (pState->oldDepth == -1.0 || pState->oldDepth == 1.0) {
-            SampleUtil::copyWithGain(
-                pState->crossfadeBuffer, pInput, 0.0, numSamples);
-        } else {
-            applyFilters(pState,
-                         pInput, pState->crossfadeBuffer,
-                         pState->bandpassBuffer,
-                         numSamples, sampleRate, pState->oldDepth,
-                         pState->oldBandpassGain);
-        }
-        if (depth < 0.0) {
-            // Lowpass + bandpass
-            // Freq from 2^5=32Hz to 2^(5+9)=16384
-            double freq = getLowFrequencyCorner(depth + 1.0);
-            double freq2 = getHighFrequencyCorner(depth + 1.0, bandpass_width);
-            pState->lowFilter.setFrequencyCorners(44100, freq2);
-            pState->bandpassFilter.setFrequencyCorners(44100, freq, freq2);
-        } else if (depth > 0.0) {
-            // Highpass + bandpass
-            double freq = getLowFrequencyCorner(depth);
-            double freq2 = getHighFrequencyCorner(depth, bandpass_width);
-            pState->highFilter.setFrequencyCorners(44100, freq);
-            pState->bandpassFilter.setFrequencyCorners(44100, freq, freq2);
-        }
-    }
+    double hpf;
+    double lpf;
+    double q = m_pQ->value();
 
-    if (depth == 0.0) {
-        SampleUtil::copyWithGain(pOutput, pInput, 1.0, numSamples);
-    } else if (depth == -1.0 || depth == 1.0) {
-        SampleUtil::copyWithGain(pOutput, pInput, 0.0, numSamples);
+    const double minCornerNormalized = kMinCorner / bufferParameters.sampleRate();
+    const double maxCornerNormalized = kMaxCorner / bufferParameters.sampleRate();
+
+    if (enableState == EffectEnableState::Disabling) {
+        // Ramp to dry, when disabling, this will ramp from dry when enabling as well
+        hpf = minCornerNormalized;
+        lpf = maxCornerNormalized;
     } else {
-        applyFilters(pState, pInput, pOutput, pState->bandpassBuffer,
-                     numSamples, sampleRate, depth, bandpass_gain);
+        hpf = m_pHPF->value() / bufferParameters.sampleRate();
+        lpf = m_pLPF->value() / bufferParameters.sampleRate();
     }
 
-    if (parametersChanged) {
-        SampleUtil::linearCrossfadeBuffers(pOutput, pState->crossfadeBuffer,
-                                           pOutput, numSamples);
-        pState->oldDepth = depth;
-        pState->oldBandpassWidth = bandpass_width;
-        pState->oldBandpassGain = bandpass_gain;
+    if ((pState->m_loFreq != lpf) ||
+            (pState->m_q != q) ||
+            (pState->m_hiFreq != hpf)) {
+        // limit Q to ~4 in case of overlap
+        // Determined empirically at 1000 Hz
+        double ratio = hpf / lpf;
+        double clampedQ = q;
+        if (ratio < 1.414 && ratio >= 1) {
+            ratio -= 1;
+            double qmax = 2 + ratio * ratio * ratio * 29;
+            clampedQ = math_min(clampedQ, qmax);
+        } else if (ratio < 1 && ratio >= 0.7) {
+            clampedQ = math_min(clampedQ, 2.0);
+        } else if (ratio < 0.7 && ratio > 0.1) {
+            ratio -= 0.1;
+            double qmax = 4 - 2 / 0.6 * ratio;
+            clampedQ = math_min(clampedQ, qmax);
+        }
+        pState->m_pLowFilter->setFrequencyCorners(1, lpf, clampedQ);
+        pState->m_pHighFilter->setFrequencyCorners(1, hpf, clampedQ);
     }
-}
 
-void FilterEffect::applyFilters(FilterGroupState* pState,
-                                const CSAMPLE* pInput, CSAMPLE* pOutput,
-                                CSAMPLE* pTempBuffer,
-                                const unsigned int numSamples,
-                                const unsigned int sampleRate,
-                                double depth, CSAMPLE bandpassGain) {
-    Q_UNUSED(sampleRate)
-    if (depth < 0.0) {
-        pState->lowFilter.process(pInput, pOutput, numSamples);
-        pState->bandpassFilter.process(pInput, pTempBuffer, numSamples);
+    const CSAMPLE* pLpfInput = pState->m_buffer.data();
+    CSAMPLE* pHpfOutput = pState->m_buffer.data();
+    if (lpf >= maxCornerNormalized && pState->m_loFreq >= maxCornerNormalized) {
+        // Lpf disabled Hpf can write directly to output
+        pHpfOutput = pOutput;
+        pLpfInput = pHpfOutput;
+    }
+
+    if (hpf > minCornerNormalized) {
+        // hpf enabled, fade-in is handled in the filter when starting from pause
+        pState->m_pHighFilter->process(pInput, pHpfOutput, bufferParameters.samplesPerBuffer());
+    } else if (pState->m_hiFreq > minCornerNormalized) {
+            // hpf disabling
+            pState->m_pHighFilter->processAndPauseFilter(pInput,
+                    pHpfOutput, bufferParameters.samplesPerBuffer());
     } else {
-        pState->highFilter.process(pInput, pOutput, numSamples);
-        pState->bandpassFilter.process(pInput, pTempBuffer, numSamples);
-
+        // paused LP uses input directly
+        pLpfInput = pInput;
     }
-    SampleUtil::addWithGain(pOutput, pTempBuffer, bandpassGain, numSamples);
+
+    if (lpf < maxCornerNormalized) {
+        // lpf enabled, fade-in is handled in the filter when starting from pause
+        pState->m_pLowFilter->process(pLpfInput, pOutput, bufferParameters.samplesPerBuffer());
+    } else if (pState->m_loFreq < maxCornerNormalized) {
+        // hpf disabling
+        pState->m_pLowFilter->processAndPauseFilter(pLpfInput,
+                pOutput, bufferParameters.samplesPerBuffer());
+    } else if (pLpfInput == pInput) {
+        // Both disabled
+        if (pOutput != pInput) {
+            // We need to copy pInput pOutput
+            SampleUtil::copy(pOutput, pInput, bufferParameters.samplesPerBuffer());
+        }
+    }
+
+    pState->m_loFreq = lpf;
+    pState->m_q = q;
+    pState->m_hiFreq = hpf;
 }

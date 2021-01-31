@@ -14,75 +14,129 @@
 #include "controllers/controllermanager.h"
 #include "library/library.h"
 #include "effects/effectsmanager.h"
-#include "playermanager.h"
+#include "mixer/playermanager.h"
 #include "util/debug.h"
+#include "skin/launchimage.h"
+#include "util/timer.h"
+#include "recording/recordingmanager.h"
 
-SkinLoader::SkinLoader(ConfigObject<ConfigValue>* pConfig) :
+SkinLoader::SkinLoader(UserSettingsPointer pConfig) :
         m_pConfig(pConfig) {
-
-
 }
 
 SkinLoader::~SkinLoader() {
     LegacySkinParser::freeChannelStrings();
 }
 
-QString SkinLoader::getConfiguredSkinPath() {
+QList<QDir> SkinLoader::getSkinSearchPaths() const {
+    QList<QDir> searchPaths;
+    // If we can't find the skins folder then we can't load a skin at all. This
+    // is a critical error in the user's Mixxx installation.
+    QDir skinsPath(m_pConfig->getResourcePath());
+    if (!skinsPath.cd("skins")) {
+        reportCriticalErrorAndQuit("Skin directory does not exist: " +
+                                   skinsPath.absoluteFilePath("skins"));
+    }
+    searchPaths.append(skinsPath);
 
-    QString qSkinPath = m_pConfig->getResourcePath();
-    qSkinPath.append("skins/");
+    QDir developerSkinsPath(m_pConfig->getResourcePath());
+    if (developerSkinsPath.cd("developer_skins")) {
+        searchPaths.append(developerSkinsPath);
+    }
 
-    QString configSkin = m_pConfig->getValueString(ConfigKey("[Config]","Skin"));
-    QString qThisSkin = qSkinPath + configSkin;
-    QDir thisSkin(qThisSkin);
+    return searchPaths;
+}
 
-    if (configSkin.length() > 0 && thisSkin.exists()) {
-        qSkinPath = qThisSkin;
-    } else {
-        // try developer path
-        qSkinPath = m_pConfig->getResourcePath();
-        qSkinPath.append("developer_skins/");
-        qThisSkin = qSkinPath + configSkin;
-        thisSkin = qThisSkin;
-        if (configSkin.length() > 0 && thisSkin.exists()) {
-            qSkinPath = qThisSkin;
-        } else {
-            // Fall back to default skin
-            QString defaultSkin;
-            QRect screenGeo = QApplication::desktop()->screenGeometry();
-            if (screenGeo.width() >= 1280 && screenGeo.height() >= 800) {
-                defaultSkin = "LateNight";
-            }
-            else if (screenGeo.width() >= 1024 && screenGeo.height() >= 600) {
-                defaultSkin = "ShadeDark1024x600-Netbook";
-            }
-            else {
-                defaultSkin = "Outline800x480-WVGA"; // Mixxx's smallest Skin
-            }
-            qSkinPath = m_pConfig->getResourcePath();
-            qSkinPath.append("skins/");
-            qSkinPath.append(defaultSkin);
+QString SkinLoader::getSkinPath(const QString& skinName) const {
+    for (QDir dir : getSkinSearchPaths()) {
+        if (dir.cd(skinName)) {
+            return dir.absolutePath();
+        }
+    }
+    return QString();
+}
+
+QPixmap SkinLoader::getSkinPreview(const QString& skinName) const {
+    QPixmap preview(getSkinPath(skinName) + "/preferences_preview_screenshot.png");
+    if (!preview.isNull()){
+        return preview;
+    }
+    return QPixmap(":/images/skin_preview_placeholder.png");
+}
+
+QString SkinLoader::getConfiguredSkinPath() const {
+    QString configSkin = m_pConfig->getValueString(ConfigKey("[Config]", "ResizableSkin"));
+
+    // If we don't have a skin defined, we might be migrating from 1.11 and
+    // should pick the closest-possible skin.
+    if (configSkin.isEmpty()) {
+        QString oldSkin = m_pConfig->getValueString(ConfigKey("[Config]", "Skin"));
+        if (!oldSkin.isEmpty()) {
+            configSkin = pickResizableSkin(oldSkin);
+        }
+        // If the old skin was empty or we couldn't guess a skin, go with the
+        // default.
+        if (configSkin.isEmpty()) {
+            configSkin = getDefaultSkinName();
         }
     }
 
-    QDir skinPath(qSkinPath);
-    if (!skinPath.exists()) {
-        reportCriticalErrorAndQuit("Skin directory does not exist: " + qSkinPath);
-    }
+    QString skinPath = getSkinPath(configSkin);
 
-    return qSkinPath;
+    if (skinPath.isEmpty()) {
+        skinPath = getSkinPath(getDefaultSkinName());
+        qDebug() << "Could not find the user's configured skin."
+                 << "Falling back on the default skin:" << skinPath;
+    }
+    return skinPath;
 }
 
-QWidget* SkinLoader::loadDefaultSkin(QWidget* pParent,
-                                     MixxxKeyboard* pKeyboard,
-                                     PlayerManager* pPlayerManager,
-                                     ControllerManager* pControllerManager,
-                                     Library* pLibrary,
-                                     VinylControlManager* pVCMan,
-                                     EffectsManager* pEffectsManager) {
+QString SkinLoader::getDefaultSkinName() const {
+    return "Deere";
+}
+
+QWidget* SkinLoader::loadConfiguredSkin(QWidget* pParent,
+                                        KeyboardEventFilter* pKeyboard,
+                                        PlayerManager* pPlayerManager,
+                                        ControllerManager* pControllerManager,
+                                        Library* pLibrary,
+                                        VinylControlManager* pVCMan,
+                                        EffectsManager* pEffectsManager,
+                                        RecordingManager* pRecordingManager) {
+    ScopedTimer timer("SkinLoader::loadConfiguredSkin");
     QString skinPath = getConfiguredSkinPath();
+
+    // If we don't have a skin path then fail.
+    if (skinPath.isEmpty()) {
+        return NULL;
+    }
+
     LegacySkinParser legacy(m_pConfig, pKeyboard, pPlayerManager,
                             pControllerManager, pLibrary, pVCMan,
-                            pEffectsManager);
+                            pEffectsManager, pRecordingManager);
     return legacy.parseSkin(skinPath, pParent);
+}
+
+LaunchImage* SkinLoader::loadLaunchImage(QWidget* pParent) {
+    QString skinPath = getConfiguredSkinPath();
+    LegacySkinParser parser(m_pConfig);
+    LaunchImage* pLaunchImage = parser.parseLaunchImage(skinPath, pParent);
+    if (pLaunchImage == nullptr) {
+        // Construct default LaunchImage
+        pLaunchImage = new LaunchImage(pParent, QString());
+    }
+    return pLaunchImage;
+}
+
+QString SkinLoader::pickResizableSkin(QString oldSkin) const {
+    if (oldSkin.contains("latenight", Qt::CaseInsensitive)) {
+        return "LateNight";
+    }
+    if (oldSkin.contains("deere", Qt::CaseInsensitive)) {
+        return "Deere";
+    }
+    if (oldSkin.contains("shade", Qt::CaseInsensitive)) {
+        return "Shade";
+    }
+    return QString();
 }

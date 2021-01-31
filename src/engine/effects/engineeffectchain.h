@@ -3,10 +3,13 @@
 
 #include <QString>
 #include <QList>
-#include <QSet>
+#include <QLinkedList>
 
-#include "util.h"
+#include "util/class.h"
 #include "util/types.h"
+#include "util/samplebuffer.h"
+#include "util/memory.h"
+#include "engine/channelhandle.h"
 #include "engine/effects/message.h"
 #include "engine/effects/groupfeaturestate.h"
 #include "effects/effectchain.h"
@@ -15,15 +18,18 @@ class EngineEffect;
 
 class EngineEffectChain : public EffectsRequestHandler {
   public:
-    EngineEffectChain(const QString& id);
+    EngineEffectChain(const QString& id,
+                      const QSet<ChannelHandleAndGroup>& registeredInputChannels,
+                      const QSet<ChannelHandleAndGroup>& registeredOutputChannels);
     virtual ~EngineEffectChain();
 
     bool processEffectsRequest(
-        const EffectsRequest& message,
+        EffectsRequest& message,
         EffectsResponsePipe* pResponsePipe);
 
-    void process(const QString& group,
-                 CSAMPLE* pInOut,
+    bool process(const ChannelHandle& inputHandle,
+                 const ChannelHandle& outputHandle,
+                 CSAMPLE* pIn, CSAMPLE* pOut,
                  const unsigned int numSamples,
                  const unsigned int sampleRate,
                  const GroupFeatureState& groupFeatures);
@@ -32,13 +38,20 @@ class EngineEffectChain : public EffectsRequestHandler {
         return m_id;
     }
 
-    bool enabled() const {
-        return m_bEnabled;
-    }
+    bool enabledForChannel(const ChannelHandle& handle) const;
 
-    bool enabledForGroup(const QString& group) const;
+    void deleteStatesForInputChannel(const ChannelHandle* channel);
 
   private:
+    struct ChannelStatus {
+        ChannelStatus()
+                : old_gain(0),
+                  enable_state(EffectEnableState::Disabled) {
+        }
+        CSAMPLE old_gain;
+        EffectEnableState enable_state;
+    };
+
     QString debugString() const {
         return QString("EngineEffectChain(%1)").arg(m_id);
     }
@@ -46,25 +59,23 @@ class EngineEffectChain : public EffectsRequestHandler {
     bool updateParameters(const EffectsRequest& message);
     bool addEffect(EngineEffect* pEffect, int iIndex);
     bool removeEffect(EngineEffect* pEffect, int iIndex);
-    bool enableForGroup(const QString& group);
-    bool disableForGroup(const QString& group);
+    bool enableForInputChannel(const ChannelHandle* inputHandle,
+            EffectStatesMapArray* statesForEffectsInChain);
+    bool disableForInputChannel(const ChannelHandle* inputHandle);
+
+    // Gets or creates a ChannelStatus entry in m_channelStatus for the provided
+    // handle.
+    ChannelStatus& getChannelStatus(const ChannelHandle& inputHandle,
+                                    const ChannelHandle& outputHandle);
 
     QString m_id;
-    bool m_bEnabled;
-    EffectChain::InsertionType m_insertionType;
+    EffectEnableState m_enableState;
+    EffectChainInsertionType m_insertionType;
     CSAMPLE m_dMix;
     QList<EngineEffect*> m_effects;
-    CSAMPLE* m_pBuffer;
-    struct GroupStatus {
-        GroupStatus() : enabled(false),
-                        old_gain(0),
-                        ramp_out(false) {
-        }
-        bool enabled;
-        CSAMPLE old_gain;
-        bool ramp_out;
-    };
-    QMap<QString, GroupStatus> m_groupStatus;
+    mixxx::SampleBuffer m_buffer1;
+    mixxx::SampleBuffer m_buffer2;
+    ChannelHandleMap<ChannelHandleMap<ChannelStatus>> m_chainStatusForChannelMatrix;
 
     DISALLOW_COPY_AND_ASSIGN(EngineEffectChain);
 };

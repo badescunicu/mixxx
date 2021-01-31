@@ -4,6 +4,7 @@
 #include <QList>
 #include <QString>
 #include <QtDebug>
+#include <QSharedPointer>
 
 #include "effects/effectmanifestparameter.h"
 
@@ -19,61 +20,109 @@
 // the no-argument constructor be non-explicit. All methods are left virtual to
 // allow a backend to replace the entire functionality with its own (for
 // example, a database-backed manifest)
-class EffectManifest {
+class EffectManifest final {
   public:
-    EffectManifest() {
+    EffectManifest()
+        : m_isMixingEQ(false),
+          m_isMasterEQ(false),
+          m_effectRampsFromDry(false),
+          m_metaknobDefault(0.5) {
     }
 
-    virtual ~EffectManifest() {
-        //qDebug() << debugString() << "deleted";
-    }
-
-    virtual const QString& id() const {
+    const QString& id() const {
         return m_id;
     }
-    virtual void setId(const QString& id) {
+    void setId(const QString& id) {
         m_id = id;
     }
 
-    virtual const QString& name() const {
+    const QString& name() const {
         return m_name;
     }
-    virtual void setName(const QString& name) {
+    void setName(const QString& name) {
         m_name = name;
     }
 
-    virtual const QString& author() const {
+    const QString& shortName() const {
+        return m_shortName;
+    }
+    void setShortName(const QString& shortName) {
+        m_shortName = shortName;
+    }
+
+    const QString& displayName() const {
+        if (!m_shortName.isEmpty()) {
+            return m_shortName;
+        } else {
+            return m_name;
+        }
+    }
+
+    const QString& author() const {
         return m_author;
     }
-    virtual void setAuthor(const QString& author) {
+    void setAuthor(const QString& author) {
         m_author = author;
     }
 
-    virtual const QString& version() const {
+    const QString& version() const {
         return m_version;
     }
-    virtual void setVersion(const QString& version) {
+    void setVersion(const QString& version) {
         m_version = version;
     }
 
-    virtual const QString& description() const {
+    const QString& description() const {
         return m_description;
     }
-    virtual void setDescription(const QString& description) {
+
+    const bool& isMixingEQ() const {
+        return m_isMixingEQ;
+    }
+
+    void setIsMixingEQ(const bool value) {
+        m_isMixingEQ = value;
+    }
+
+    const bool& isMasterEQ() const {
+        return m_isMasterEQ;
+    }
+
+    void setIsMasterEQ(const bool value) {
+        m_isMasterEQ = value;
+    }
+
+    void setDescription(const QString& description) {
         m_description = description;
     }
 
-    virtual const QList<EffectManifestParameter>& parameters() const {
+    const QList<EffectManifestParameterPointer>& parameters() const {
         return m_parameters;
     }
 
-    virtual EffectManifestParameter* addParameter() {
-        m_parameters.append(EffectManifestParameter());
-        return &m_parameters.last();
+    EffectManifestParameterPointer addParameter() {
+        EffectManifestParameterPointer effectManifestParameterPointer(
+                new EffectManifestParameter());
+        m_parameters.append(effectManifestParameterPointer);
+        return effectManifestParameterPointer;
     }
 
-    virtual EffectManifestParameter* parameter(int i) {
-        return &m_parameters[i];
+    EffectManifestParameterPointer parameter(int i) {
+        return m_parameters[i];
+    }
+
+    bool effectRampsFromDry() const {
+        return m_effectRampsFromDry;
+    }
+    void setEffectRampsFromDry(bool effectFadesFromDry) {
+        m_effectRampsFromDry = effectFadesFromDry;
+    }
+
+    double metaknobDefault() const {
+        return m_metaknobDefault;
+    }
+    void setMetaknobDefault(double metaknobDefault) {
+        m_metaknobDefault = metaknobDefault;
     }
 
   private:
@@ -83,10 +132,16 @@ class EffectManifest {
 
     QString m_id;
     QString m_name;
+    QString m_shortName;
     QString m_author;
     QString m_version;
     QString m_description;
-    QList<EffectManifestParameter> m_parameters;
+    // This helps us at DlgPrefEQ's basic selection of Equalizers
+    bool m_isMixingEQ;
+    bool m_isMasterEQ;
+    QList<EffectManifestParameterPointer> m_parameters;
+    bool m_effectRampsFromDry;
+    double m_metaknobDefault;
 };
 
 #endif /* EFFECTMANIFEST_H */

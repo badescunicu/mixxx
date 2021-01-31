@@ -6,58 +6,55 @@
 
 #include <QMap>
 
-#include "util.h"
-#include "util/types.h"
-#include "util/defs.h"
+#include <Reverb.h>
+
 #include "effects/effectprocessor.h"
-#include "effects/native/reverb/Reverb.h"
 #include "engine/effects/engineeffect.h"
 #include "engine/effects/engineeffectparameter.h"
-#include "sampleutil.h"
+#include "util/class.h"
+#include "util/defs.h"
+#include "util/sample.h"
+#include "util/types.h"
 
-struct ReverbGroupState {
-    ReverbGroupState() {
-        // Default damping value.
-        prev_bandwidth = 0.5;
-        prev_damping = 0.5;
-        reverb.init();
-        reverb.activate();
-        crossfade_buffer = SampleUtil::alloc(MAX_BUFFER_LEN);
+class ReverbGroupState : public EffectState {
+  public:
+    ReverbGroupState(const mixxx::EngineParameters& bufferParameters)
+        : EffectState(bufferParameters) {
     }
 
-    ~ReverbGroupState() {
-        delete crossfade_buffer;
+    void engineParametersChanged(const mixxx::EngineParameters& bufferParameters) {
+        sampleRate = bufferParameters.sampleRate();
     }
 
-    MixxxPlateX2 reverb;
-    CSAMPLE* crossfade_buffer;
-    double prev_bandwidth;
-    double prev_damping;
+    float sampleRate;
+    MixxxPlateX2 reverb{};
 };
 
-class ReverbEffect : public GroupEffectProcessor<ReverbGroupState> {
+class ReverbEffect : public EffectProcessorImpl<ReverbGroupState> {
   public:
-    ReverbEffect(EngineEffect* pEffect, const EffectManifest& manifest);
+    ReverbEffect(EngineEffect* pEffect);
     virtual ~ReverbEffect();
 
     static QString getId();
-    static EffectManifest getManifest();
+    static EffectManifestPointer getManifest();
 
     // See effectprocessor.h
-    void processGroup(const QString& group,
-                      ReverbGroupState* pState,
-                      const CSAMPLE* pInput, CSAMPLE* pOutput,
-                      const unsigned int numSamples,
-                      const unsigned int sampleRate,
-                      const GroupFeatureState& groupFeatures);
+    void processChannel(const ChannelHandle& handle,
+                        ReverbGroupState* pState,
+                        const CSAMPLE* pInput, CSAMPLE* pOutput,
+                        const mixxx::EngineParameters& bufferParameters,
+                        const EffectEnableState enableState,
+                        const GroupFeatureState& groupFeatures);
 
   private:
     QString debugString() const {
         return getId();
     }
 
+    EngineEffectParameter* m_pDecayParameter;
     EngineEffectParameter* m_pBandWidthParameter;
     EngineEffectParameter* m_pDampingParameter;
+    EngineEffectParameter* m_pSendParameter;
 
     DISALLOW_COPY_AND_ASSIGN(ReverbEffect);
 };

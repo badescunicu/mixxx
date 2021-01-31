@@ -1,38 +1,41 @@
 #include <gtest/gtest.h>
 #include <QtDebug>
 #include <QDir>
-#include <QTemporaryFile>
+
+#include "test/librarytest.h"
 
 #include "library/searchqueryparser.h"
+#include "util/assert.h"
 
-class SearchQueryParserTest : public testing::Test {
+class SearchQueryParserTest : public LibraryTest {
   protected:
     SearchQueryParserTest()
-            : m_database(QSqlDatabase::addDatabase("QSQLITE")),
-              m_parser(m_database) {
-        QTemporaryFile databaseFile("mixxxdb.sqlite");
-        Q_ASSERT(databaseFile.open());
-        m_database.setHostName("localhost");
-        m_database.setUserName("mixxx");
-        m_database.setPassword("mixxx");
-        qDebug() << "Temp file is" << databaseFile.fileName();
-        m_database.setDatabaseName(databaseFile.fileName());
-        Q_ASSERT(m_database.open());
+            : m_parser(collection()) {
     }
 
     virtual ~SearchQueryParserTest() {
     }
 
-    QSqlDatabase m_database;
+    TrackId addTrackToCollection(const QString& trackLocation) {
+        TrackPointer pTrack(collection()->getTrackDAO().addSingleTrack(trackLocation, false));
+        return pTrack ? pTrack->getId() : TrackId();
+    }
+
     SearchQueryParser m_parser;
+
+    // The expected query to be returned by CrateFilterNode
+    const QString m_crateFilterQuery =
+        "id IN (SELECT DISTINCT track_id FROM crate_tracks"
+        " JOIN crates ON crate_id=id WHERE name LIKE '%%1%' ORDER BY track_id)";
 };
 
 TEST_F(SearchQueryParserTest, EmptySearch) {
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("", QStringList(), ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
-    EXPECT_FALSE(pQuery->match(pTrack));
+    // An empty query matches all tracks.
+    TrackPointer pTrack(Track::newTemporary());
+    EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(qPrintable(QString("")),
                  qPrintable(pQuery->toSql()));
@@ -42,17 +45,17 @@ TEST_F(SearchQueryParserTest, OneTermOneColumn) {
     QStringList searchColumns;
     searchColumns << "artist";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("asdf", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setTitle("testASDFtest");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setArtist("testASDFtest");
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(artist LIKE '%asdf%')")),
+        qPrintable(QString("artist LIKE '%asdf%'")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -61,17 +64,36 @@ TEST_F(SearchQueryParserTest, OneTermMultipleColumns) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("asdf", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setTitle("testASDFtest");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setAlbum("testASDFtest");
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("((artist LIKE '%asdf%') OR (album LIKE '%asdf%'))")),
+        qPrintable(QString("(artist LIKE '%asdf%') OR (album LIKE '%asdf%')")),
+        qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, OneTermMultipleColumnsNegation) {
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    auto pQuery(
+        m_parser.parseQuery("-asdf", searchColumns, ""));
+
+    TrackPointer pTrack(Track::newTemporary());
+    pTrack->setTitle("testASDFtest");
+    EXPECT_TRUE(pQuery->match(pTrack));
+    pTrack->setAlbum("testASDFtest");
+    EXPECT_FALSE(pQuery->match(pTrack));
+
+    EXPECT_STREQ(
+        qPrintable(QString("NOT ((artist LIKE '%asdf%') OR (album LIKE '%asdf%'))")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -79,10 +101,10 @@ TEST_F(SearchQueryParserTest, MultipleTermsOneColumn) {
     QStringList searchColumns;
     searchColumns << "artist";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("asdf zxcv", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setTitle("test zXcV test");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setArtist("test zXcV test asDf");
@@ -98,10 +120,10 @@ TEST_F(SearchQueryParserTest, MultipleTermsMultipleColumns) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("asdf zxcv", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setTitle("asdf zxcv");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setArtist("zXcV");
@@ -118,22 +140,66 @@ TEST_F(SearchQueryParserTest, MultipleTermsMultipleColumns) {
         qPrintable(pQuery->toSql()));
 }
 
+TEST_F(SearchQueryParserTest, MultipleTermsMultipleColumnsNegation) {
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    auto pQuery(
+        m_parser.parseQuery("asdf -zxcv", searchColumns, ""));
+
+    TrackPointer pTrack(Track::newTemporary());
+    pTrack->setTitle("asdf zxcv");
+    EXPECT_FALSE(pQuery->match(pTrack));
+    pTrack->setAlbum("asDF");
+    EXPECT_TRUE(pQuery->match(pTrack));
+    pTrack->setArtist("zXcV");
+    EXPECT_FALSE(pQuery->match(pTrack));
+    pTrack->setArtist("");
+    pTrack->setAlbum("ASDF ZXCV");
+    EXPECT_FALSE(pQuery->match(pTrack));
+
+    EXPECT_STREQ(
+        qPrintable(QString(
+            "((artist LIKE '%asdf%') OR (album LIKE '%asdf%')) "
+            "AND (NOT ((artist LIKE '%zxcv%') OR (album LIKE '%zxcv%')))")),
+        qPrintable(pQuery->toSql()));
+}
+
 TEST_F(SearchQueryParserTest, TextFilter) {
     QStringList searchColumns;
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("comment:asdf", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setArtist("asdf");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setComment("test ASDF test");
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(comment LIKE '%asdf%')")),
+        qPrintable(QString("comment LIKE '%asdf%'")),
+        qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, TextFilterEmpty) {
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    // An empty argument should pass everything.
+    auto pQuery(
+        m_parser.parseQuery("comment:", searchColumns, ""));
+
+    TrackPointer pTrack(Track::newTemporary());
+    pTrack->setComment("test ASDF test");
+    EXPECT_TRUE(pQuery->match(pTrack));
+
+    EXPECT_STREQ(
+        qPrintable(QString("")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -142,17 +208,17 @@ TEST_F(SearchQueryParserTest, TextFilterQuote) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("comment:\"asdf zxcv\"", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setArtist("asdf zxcv");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setComment("test ASDF zxcv test");
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(comment LIKE '%asdf zxcv%')")),
+        qPrintable(QString("comment LIKE '%asdf zxcv%'")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -161,17 +227,17 @@ TEST_F(SearchQueryParserTest, TextFilterQuote_NoEndQuoteTakesWholeQuery) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("comment:\"asdf zxcv qwer", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setArtist("asdf zxcv qwer");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setComment("test ASDF zxcv qwer test");
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(comment LIKE '%asdf zxcv qwer%')")),
+        qPrintable(QString("comment LIKE '%asdf zxcv qwer%'")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -180,17 +246,36 @@ TEST_F(SearchQueryParserTest, TextFilterAllowsSpace) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("comment: asdf", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setArtist("asdf");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setComment("test ASDF test");
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(comment LIKE '%asdf%')")),
+        qPrintable(QString("comment LIKE '%asdf%'")),
+        qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, TextFilterNegation) {
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    auto pQuery(
+        m_parser.parseQuery("-comment: asdf", searchColumns, ""));
+
+    TrackPointer pTrack(Track::newTemporary());
+    pTrack->setArtist("asdf");
+    EXPECT_TRUE(pQuery->match(pTrack));
+    pTrack->setComment("test ASDF test");
+    EXPECT_FALSE(pQuery->match(pTrack));
+
+    EXPECT_STREQ(
+        qPrintable(QString("NOT (comment LIKE '%asdf%')")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -199,10 +284,10 @@ TEST_F(SearchQueryParserTest, NumericFilter) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("bpm:127.12", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setBpm(127);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -210,7 +295,45 @@ TEST_F(SearchQueryParserTest, NumericFilter) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(bpm = 127.12)")),
+        qPrintable(QString("bpm = 127.12")),
+        qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, NumericFilterEmpty) {
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    auto pQuery(
+        m_parser.parseQuery("bpm:", searchColumns, ""));
+
+    TrackPointer pTrack(Track::newTemporary());
+    pTrack->setSampleRate(44100);
+    pTrack->setBpm(127);
+    EXPECT_TRUE(pQuery->match(pTrack));
+
+    EXPECT_STREQ(
+        qPrintable(QString("")),
+        qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, NumericFilterNegation) {
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    auto pQuery(
+        m_parser.parseQuery("-bpm:127.12", searchColumns, ""));
+
+    TrackPointer pTrack(Track::newTemporary());
+    pTrack->setSampleRate(44100);
+    pTrack->setBpm(127);
+    EXPECT_TRUE(pQuery->match(pTrack));
+    pTrack->setBpm(127.12);
+    EXPECT_FALSE(pQuery->match(pTrack));
+
+    EXPECT_STREQ(
+        qPrintable(QString("NOT (bpm = 127.12)")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -219,10 +342,10 @@ TEST_F(SearchQueryParserTest, NumericFilterAllowsSpace) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("bpm: 127.12", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setBpm(127);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -230,7 +353,7 @@ TEST_F(SearchQueryParserTest, NumericFilterAllowsSpace) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(bpm = 127.12)")),
+        qPrintable(QString("bpm = 127.12")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -239,45 +362,45 @@ TEST_F(SearchQueryParserTest, NumericFilterOperators) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("bpm:>127.12", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setBpm(127.12);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setBpm(127.13);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(bpm > 127.12)")),
+        qPrintable(QString("bpm > 127.12")),
         qPrintable(pQuery->toSql()));
 
 
-    pQuery.reset(m_parser.parseQuery("bpm:>=127.12", searchColumns, ""));
+    pQuery = m_parser.parseQuery("bpm:>=127.12", searchColumns, "");
     pTrack->setBpm(127.11);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setBpm(127.12);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(bpm >= 127.12)")),
+        qPrintable(QString("bpm >= 127.12")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("bpm:<127.12", searchColumns, ""));
+    pQuery = m_parser.parseQuery("bpm:<127.12", searchColumns, "");
     pTrack->setBpm(127.12);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setBpm(127.11);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(bpm < 127.12)")),
+        qPrintable(QString("bpm < 127.12")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("bpm:<=127.12", searchColumns, ""));
+    pQuery = m_parser.parseQuery("bpm:<=127.12", searchColumns, "");
     pTrack->setBpm(127.13);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setBpm(127.12);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(bpm <= 127.12)")),
+        qPrintable(QString("bpm <= 127.12")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -286,10 +409,10 @@ TEST_F(SearchQueryParserTest, NumericRangeFilter) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("bpm:127.12-129", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setBpm(125);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -299,7 +422,7 @@ TEST_F(SearchQueryParserTest, NumericRangeFilter) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(bpm >= 127.12 AND bpm <= 129)")),
+        qPrintable(QString("(bpm >= 127.12) AND (bpm <= 129)")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -308,11 +431,11 @@ TEST_F(SearchQueryParserTest, MultipleFilters) {
     searchColumns << "artist"
                   << "title";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("bpm:127.12-129 artist:\"com truise\" Colorvision",
                             searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setBpm(128);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -322,7 +445,7 @@ TEST_F(SearchQueryParserTest, MultipleFilters) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(bpm >= 127.12 AND bpm <= 129) AND "
+        qPrintable(QString("((bpm >= 127.12) AND (bpm <= 129)) AND "
                            "((artist LIKE '%com truise%') OR (album_artist LIKE '%com truise%')) AND "
                            "((artist LIKE '%Colorvision%') OR (title LIKE '%Colorvision%'))")),
         qPrintable(pQuery->toSql()));
@@ -332,10 +455,10 @@ TEST_F(SearchQueryParserTest, ExtraFilterAppended) {
     QStringList searchColumns;
     searchColumns << "artist";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("asdf", searchColumns, "1 > 2"));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setArtist("zxcv");
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setArtist("asdf");
@@ -351,10 +474,10 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearch) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("duration:1:30", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setDuration(91);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -362,127 +485,127 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearch) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration = 90)")),
+        qPrintable(QString("duration = 90")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:1m30s", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:1m30s", searchColumns, "");
     pTrack->setDuration(91);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(90);
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration = 90)")),
+        qPrintable(QString("duration = 90")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:90", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:90", searchColumns, "");
     pTrack->setDuration(91);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(90);
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration = 90)")),
+        qPrintable(QString("duration = 90")),
         qPrintable(pQuery->toSql()));
 }
 
-TEST_F(SearchQueryParserTest, HumanReadableDurationSearchwithOperators) {
+TEST_F(SearchQueryParserTest, HumanReadableDurationSearchWithOperators) {
     QStringList searchColumns;
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("duration:>1:30", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setDuration(89);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(91);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration > 90)")),
+        qPrintable(QString("duration > 90")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:>=90", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:>=90", searchColumns, "");
     pTrack->setDuration(89);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(90);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 90)")),
+        qPrintable(QString("duration >= 90")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:>=1:30", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:>=1:30", searchColumns, "");
     pTrack->setDuration(89);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(90);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 90)")),
+        qPrintable(QString("duration >= 90")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:<2:30", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:<2:30", searchColumns, "");
     pTrack->setDuration(151);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(89);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration < 150)")),
+        qPrintable(QString("duration < 150")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:<=2:30", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:<=2:30", searchColumns, "");
     pTrack->setDuration(191);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(150);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration <= 150)")),
+        qPrintable(QString("duration <= 150")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:<=150", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:<=150", searchColumns, "");
     pTrack->setDuration(191);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(150);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration <= 150)")),
+        qPrintable(QString("duration <= 150")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:<=2m30s", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:<=2m30s", searchColumns, "");
     pTrack->setDuration(191);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(150);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration <= 150)")),
+        qPrintable(QString("duration <= 150")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:<=2m", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:<=2m", searchColumns, "");
     pTrack->setDuration(191);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(110);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration <= 120)")),
+        qPrintable(QString("duration <= 120")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:<=2:", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:<=2:", searchColumns, "");
     pTrack->setDuration(191);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(110);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration <= 120)")),
+        qPrintable(QString("duration <= 120")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:>=1:3", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:>=1:3", searchColumns, "");
     pTrack->setDuration(60);
     EXPECT_FALSE(pQuery->match(pTrack));
     pTrack->setDuration(150);
     EXPECT_TRUE(pQuery->match(pTrack));
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 63)")),
+        qPrintable(QString("duration >= 63")),
         qPrintable(pQuery->toSql()));
 }
 
@@ -491,10 +614,10 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearchwithRangeFilter) {
     searchColumns << "artist"
                   << "album";
 
-    QScopedPointer<QueryNode> pQuery(
+    auto pQuery(
         m_parser.parseQuery("duration:2:30-3:20", searchColumns, ""));
 
-    TrackPointer pTrack(new TrackInfoObject());
+    TrackPointer pTrack(Track::newTemporary());
     pTrack->setSampleRate(44100);
     pTrack->setDuration(80);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -504,10 +627,10 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearchwithRangeFilter) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 150 AND duration <= 200)")),
+        qPrintable(QString("(duration >= 150) AND (duration <= 200)")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:2:30-200", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:2:30-200", searchColumns, "");
     pTrack->setSampleRate(44100);
     pTrack->setDuration(80);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -517,10 +640,10 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearchwithRangeFilter) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 150 AND duration <= 200)")),
+        qPrintable(QString("(duration >= 150) AND (duration <= 200)")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:150-200", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:150-200", searchColumns, "");
     pTrack->setSampleRate(44100);
     pTrack->setDuration(80);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -530,10 +653,10 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearchwithRangeFilter) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 150 AND duration <= 200)")),
+        qPrintable(QString("(duration >= 150) AND (duration <= 200)")),
         qPrintable(pQuery->toSql()));
 
-    pQuery.reset(m_parser.parseQuery("duration:2m30s-3m20s", searchColumns, ""));
+    pQuery = m_parser.parseQuery("duration:2m30s-3m20s", searchColumns, "");
     pTrack->setSampleRate(44100);
     pTrack->setDuration(80);
     EXPECT_FALSE(pQuery->match(pTrack));
@@ -543,6 +666,208 @@ TEST_F(SearchQueryParserTest, HumanReadableDurationSearchwithRangeFilter) {
     EXPECT_TRUE(pQuery->match(pTrack));
 
     EXPECT_STREQ(
-        qPrintable(QString("(duration >= 150 AND duration <= 200)")),
+        qPrintable(QString("(duration >= 150) AND (duration <= 200)")),
         qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, CrateFilter) {
+    // User's search term
+    QString searchTerm = "test";
+
+    // Parse the user query
+    auto pQuery(m_parser.parseQuery(QString("crate: %1").arg(searchTerm),
+                                    QStringList(), ""));
+
+    // locations for test tracks
+    const QString kTrackALocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-jpg.mp3");
+    const QString kTrackBLocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-png.mp3");
+
+    // Create new crate and add it to the collection
+    Crate testCrate;
+    testCrate.setName(searchTerm);
+    CrateId testCrateId;
+    collection()->insertCrate(testCrate, &testCrateId);
+
+    // Add the track in the collection
+    TrackId trackAId = addTrackToCollection(kTrackALocationTest);
+    TrackPointer pTrackA(Track::newDummy(kTrackALocationTest, trackAId));
+    TrackId trackBId = addTrackToCollection(kTrackBLocationTest);
+    TrackPointer pTrackB(Track::newDummy(kTrackBLocationTest, trackBId));
+
+    // Add track A to the newly created crate
+    QList<TrackId> trackIds;
+    trackIds << trackAId;
+    collection()->addCrateTracks(testCrateId, trackIds);
+
+    EXPECT_TRUE(pQuery->match(pTrackA));
+    EXPECT_FALSE(pQuery->match(pTrackB));
+
+    EXPECT_STREQ(
+                 qPrintable(m_crateFilterQuery.arg(searchTerm)),
+                 qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, CrateFilterEmpty) {
+    // Empty should match everything
+    auto pQuery(m_parser.parseQuery(QString("crate: "), QStringList(), ""));
+
+    TrackPointer pTrackA(Track::newTemporary());
+
+    EXPECT_TRUE(pQuery->match(pTrackA));
+
+    EXPECT_STREQ(
+                 qPrintable(""),
+                 qPrintable(pQuery->toSql()));
+}
+
+// Checks if the crate filter works with quoted text with whitespaces
+TEST_F(SearchQueryParserTest, CrateFilterQuote){
+    // User's search term
+    QString searchTerm = "test with whitespace";
+
+    // Parse the user query
+    auto pQuery(m_parser.parseQuery(QString("crate: \"%1\"").arg(searchTerm),
+                                    QStringList(), ""));
+
+    // locations for test tracks
+    const QString kTrackALocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-jpg.mp3");
+    const QString kTrackBLocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-png.mp3");
+
+    // Create new crate and add it to the collection
+    Crate testCrate;
+    testCrate.setName(searchTerm);
+    CrateId testCrateId;
+    collection()->insertCrate(testCrate, &testCrateId);
+
+    // Add the tracks in the collection
+    TrackId trackAId = addTrackToCollection(kTrackALocationTest);
+    TrackPointer pTrackA(Track::newDummy(kTrackALocationTest, trackAId));
+    TrackId trackBId = addTrackToCollection(kTrackBLocationTest);
+    TrackPointer pTrackB(Track::newDummy(kTrackBLocationTest, trackBId));
+
+    // Add track A to the newly created crate
+    QList<TrackId> trackIds;
+    trackIds << trackAId;
+    collection()->addCrateTracks(testCrateId, trackIds);
+
+    EXPECT_TRUE(pQuery->match(pTrackA));
+    EXPECT_FALSE(pQuery->match(pTrackB));
+
+    EXPECT_STREQ(
+                 qPrintable(m_crateFilterQuery.arg(searchTerm)),
+                 qPrintable(pQuery->toSql()));
+}
+
+// Tests if the crate filter works along with other filters (artist)
+TEST_F(SearchQueryParserTest, CrateFilterWithOther){
+    QStringList searchColumns;
+    searchColumns << "artist"
+                  << "album";
+
+    // User's search term
+    QString searchTerm = "test";
+
+    // Parse the user query
+    auto pQuery(m_parser.parseQuery(QString("crate: %1 artist: asdf").arg(searchTerm),
+                                    QStringList(), ""));
+
+    // locations for test tracks
+    const QString kTrackALocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-jpg.mp3");
+    const QString kTrackBLocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-png.mp3");
+
+    // Create new crate and add it to the collection
+    Crate testCrate;
+    testCrate.setName(searchTerm);
+    CrateId testCrateId;
+    collection()->insertCrate(testCrate, &testCrateId);
+
+    // Add the tracks in the collection
+    TrackId trackAId = addTrackToCollection(kTrackALocationTest);
+    TrackPointer pTrackA(Track::newDummy(kTrackALocationTest, trackAId));
+    TrackId trackBId = addTrackToCollection(kTrackBLocationTest);
+    TrackPointer pTrackB(Track::newDummy(kTrackBLocationTest, trackBId));
+
+    // Add trackA to the newly created crate
+    QList<TrackId> trackIds;
+    trackIds << trackAId;
+    collection()->addCrateTracks(testCrateId, trackIds);
+
+    pTrackA->setArtist("asdf");
+    pTrackB->setArtist("asdf");
+
+    EXPECT_TRUE(pQuery->match(pTrackA));
+    EXPECT_FALSE(pQuery->match(pTrackB));
+
+    EXPECT_STREQ(
+                 qPrintable("(" + m_crateFilterQuery.arg(searchTerm) +
+                            ") AND ((artist LIKE '%asdf%') OR (album_artist LIKE '%asdf%'))"),
+                 qPrintable(pQuery->toSql()));
+}
+
+TEST_F(SearchQueryParserTest, CrateFilterWithCrateFilterAndNegation){
+    // User's search term
+    QString searchTermA = "testA";
+    QString searchTermB = "testB";
+
+    // Parse the user query
+    auto pQueryA(m_parser.parseQuery(QString("crate: %1 crate: %2").arg(searchTermA, searchTermB),
+                                    QStringList(), ""));
+
+    // locations for test tracks
+    const QString kTrackALocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-jpg.mp3");
+    const QString kTrackBLocationTest(QDir::currentPath() %
+                  "/src/test/id3-test-data/cover-test-png.mp3");
+
+    // Create new crates and add them to the collection
+    Crate testCrateA;
+    testCrateA.setName(searchTermA);
+    CrateId testCrateAId;
+    collection()->insertCrate(testCrateA, &testCrateAId);
+    Crate testCrateB;
+    testCrateB.setName(searchTermB);
+    CrateId testCrateBId;
+    collection()->insertCrate(testCrateB, &testCrateBId);
+
+    // Add the tracks in the collection
+    TrackId trackAId = addTrackToCollection(kTrackALocationTest);
+    TrackPointer pTrackA(Track::newDummy(kTrackALocationTest, trackAId));
+    TrackId trackBId = addTrackToCollection(kTrackBLocationTest);
+    TrackPointer pTrackB(Track::newDummy(kTrackBLocationTest, trackBId));
+
+    // Add trackA and trackB to crate A
+    QList<TrackId> trackIdsA;
+    trackIdsA << trackAId << trackBId;
+    collection()->addCrateTracks(testCrateAId, trackIdsA);
+
+    // Add trackA to crate B
+    QList<TrackId> trackIdsB;
+    trackIdsB << trackAId;
+    collection()->addCrateTracks(testCrateBId, trackIdsB);
+
+    EXPECT_TRUE(pQueryA->match(pTrackA));
+    EXPECT_FALSE(pQueryA->match(pTrackB));
+
+    EXPECT_STREQ(
+                 qPrintable("(" + m_crateFilterQuery.arg(searchTermA) +
+                            ") AND (" + m_crateFilterQuery.arg(searchTermB) + ")"),
+                 qPrintable(pQueryA->toSql()));
+
+    // parse again to test negation
+    auto pQueryB(m_parser.parseQuery(QString("crate: %1 -crate: %2").arg(searchTermA, searchTermB),
+                                     QStringList(), ""));
+
+    EXPECT_FALSE(pQueryB->match(pTrackA));
+    EXPECT_TRUE(pQueryB->match(pTrackB));
+
+    EXPECT_STREQ(
+                 qPrintable("(" + m_crateFilterQuery.arg(searchTermA) +
+                            ") AND (NOT (" + m_crateFilterQuery.arg(searchTermB) + "))"),
+                 qPrintable(pQueryB->toSql()));
 }

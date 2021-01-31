@@ -6,16 +6,17 @@
 #include <QVector>
 
 #include "util/singleton.h"
-#include "configobject.h"
+#include "preferences/usersettings.h"
 #include "waveform/widgets/waveformwidgettype.h"
 #include "waveform/waveform.h"
 #include "skin/skincontext.h"
+#include "util/performancetimer.h"
 
 class WWaveformViewer;
 class WaveformWidgetAbstract;
 class QTimer;
 class VSyncThread;
-class MixxxMainWindow;
+class GuiTick;
 
 class WaveformWidgetAbstractHandle {
   public:
@@ -55,10 +56,10 @@ class WaveformWidgetHolder {
 class WaveformWidgetFactory : public QObject, public Singleton<WaveformWidgetFactory> {
     Q_OBJECT
   public:
-    //TODO merge this enum woth the waveform analyser one
+    //TODO merge this enum with the waveform analyzer one
     enum FilterIndex { All = 0, Low = 1, Mid = 2, High = 3, FilterCount = 4};
 
-    bool setConfig(ConfigObject<ConfigValue>* config);
+    bool setConfig(UserSettingsPointer config);
 
     //creates the waveform widget and bind it to the viewer
     //clean-up every thing if needed
@@ -68,6 +69,8 @@ class WaveformWidgetFactory : public QObject, public Singleton<WaveformWidgetFac
     void setFrameRate(int frameRate);
     int getFrameRate() const { return m_frameRate;}
 //    bool getVSync() const { return m_vSyncType;}
+    void setEndOfTrackWarningTime(int endTime);
+    int getEndOfTrackWarningTime() const { return m_endOfTrackWarningTime;}
 
     bool isOpenGLAvailable() const { return m_openGLAvailable;}
     QString getOpenGLVersion() const { return m_openGLVersion;}
@@ -84,6 +87,9 @@ class WaveformWidgetFactory : public QObject, public Singleton<WaveformWidgetFac
     void setZoomSync(bool sync);
     int isZoomSync() const { return m_zoomSync;}
 
+    void setDisplayBeatGrid(bool sync);
+    bool isBeatGridEnabled() const { return m_beatGridEnabled; }
+
     void setVisualGain(FilterIndex index, double gain);
     double getVisualGain(FilterIndex index) const;
 
@@ -96,7 +102,7 @@ class WaveformWidgetFactory : public QObject, public Singleton<WaveformWidgetFac
 
     void addTimerListener(QWidget* pWidget);
 
-    void startVSync(MixxxMainWindow* mixxxApp);
+    void startVSync(GuiTick* pGuiTick);
     void setVSyncType(int vsType);
     int getVSyncType();
 
@@ -132,10 +138,11 @@ class WaveformWidgetFactory : public QObject, public Singleton<WaveformWidgetFac
 
     WaveformWidgetType::Type m_type;
 
-    ConfigObject<ConfigValue>* m_config;
+    UserSettingsPointer m_config;
 
     bool m_skipRender;
     int m_frameRate;
+    int m_endOfTrackWarningTime;
     int m_defaultZoom;
     bool m_zoomSync;
     double m_visualGain[FilterCount];
@@ -144,11 +151,12 @@ class WaveformWidgetFactory : public QObject, public Singleton<WaveformWidgetFac
     bool m_openGLAvailable;
     QString m_openGLVersion;
     bool m_openGLShaderAvailable;
+    bool m_beatGridEnabled;
 
     VSyncThread* m_vsyncThread;
 
     //Debug
-    QTime m_time;
+    PerformanceTimer m_time;
     float m_frameCnt;
     double m_actualFrameRate;
     int m_vSyncType;

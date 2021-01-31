@@ -24,32 +24,52 @@ class EffectsBackend : public QObject {
 
     virtual const QString getName() const;
 
-    virtual const QSet<QString> getEffectIds() const;
-    virtual EffectManifest getManifest(const QString& effectId) const;
+    // returns a list sorted like it should be displayed in the GUI 
+    virtual const QList<QString> getEffectIds() const;
+    virtual EffectManifestPointer getManifest(const QString& effectId) const;
     virtual bool canInstantiateEffect(const QString& effectId) const;
     virtual EffectPointer instantiateEffect(
-        EffectsManager* pEffectsManager, const QString& effectId);
+            EffectsManager* pEffectsManager, const QString& effectId);
 
   signals:
-    void effectRegistered();
+    void effectRegistered(EffectManifestPointer);
 
   protected:
     void registerEffect(const QString& id,
-                        const EffectManifest& manifest,
+                        EffectManifestPointer pManifest,
                         EffectInstantiatorPointer pInstantiator);
 
     template <typename EffectProcessorImpl>
     void registerEffect() {
         registerEffect(
-            EffectProcessorImpl::getId(),
-            EffectProcessorImpl::getManifest(),
-            EffectInstantiatorPointer(
-                new EffectProcessorInstantiator<EffectProcessorImpl>()));
+                EffectProcessorImpl::getId(),
+                EffectProcessorImpl::getManifest(),
+                EffectInstantiatorPointer(
+                        new EffectProcessorInstantiator<EffectProcessorImpl>()));
     }
 
   private:
+    class RegisteredEffect {
+      public:
+        RegisteredEffect(EffectManifestPointer pManifest, EffectInstantiatorPointer pInitator)
+            : m_pManifest(pManifest),
+              m_pInitator(pInitator) {
+        }
+
+        RegisteredEffect() {
+        }
+
+        EffectManifestPointer manifest() const { return m_pManifest; };
+        EffectInstantiatorPointer initiator() const { return m_pInitator; };
+
+      private:
+        EffectManifestPointer m_pManifest;
+        EffectInstantiatorPointer m_pInitator;
+    };
+
     QString m_name;
-    QMap<QString, QPair<EffectManifest, EffectInstantiatorPointer> > m_registeredEffects;
+    QMap<QString, RegisteredEffect> m_registeredEffects;
+    QList<QString> m_effectIds;
 };
 
 #endif /* EFFECTSBACKEND_H */

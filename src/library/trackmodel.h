@@ -6,13 +6,16 @@
 #include <QItemDelegate>
 #include <QtSql>
 
-#include "trackinfoobject.h"
+#include "track/track.h"
 #include "library/dao/settingsdao.h"
 
 /** Pure virtual (abstract) class that provides an interface for data models which
     display track lists. */
 class TrackModel {
   public:
+    static const int kHeaderWidthRole = Qt::UserRole + 0;
+    static const int kHeaderNameRole = Qt::UserRole + 1;
+
     TrackModel(QSqlDatabase db,
                const char* settingsNamespace)
             : m_db(db),
@@ -32,7 +35,7 @@ class TrackModel {
         TRACKMODELCAPS_ADDTOCRATE        = 0x00008,
         TRACKMODELCAPS_ADDTOAUTODJ       = 0x00010,
         TRACKMODELCAPS_LOCKED            = 0x00020,
-        TRACKMODELCAPS_RELOADMETADATA    = 0x00040,
+        TRACKMODELCAPS_IMPORTMETADATA    = 0x00040,
         TRACKMODELCAPS_LOADTODECK        = 0x00080,
         TRACKMODELCAPS_LOADTOSAMPLER     = 0x00100,
         TRACKMODELCAPS_LOADTOPREVIEWDECK = 0x00200,
@@ -50,15 +53,17 @@ class TrackModel {
     // set.
     virtual TrackPointer getTrack(const QModelIndex& index) const = 0;
 
-    // Gets the on-disk location of the track at the given location.
+    // Gets the on-disk location of the track at the given location
+    // with Qt separator "/".
+    // Use QDir::toNativeSeparators() before displaying this to a user.
     virtual QString getTrackLocation(const QModelIndex& index) const = 0;
 
     // Gets the track ID of the track at the given QModelIndex
-    virtual int getTrackId(const QModelIndex& index) const = 0;
+    virtual TrackId getTrackId(const QModelIndex& index) const = 0;
 
-    // Gets the row of the track in the current result set. Returns -1 if the
-    // track ID is not present in the result set.
-    virtual const QLinkedList<int> getTrackRows(int trackId) const = 0;
+    // Gets the rows of the track in the current result set. Returns an
+    // empty list if the track ID is not present in the result set.
+    virtual const QLinkedList<int> getTrackRows(TrackId trackId) const = 0;
 
     bool isTrackModel() { return true;}
     virtual void search(const QString& searchText, const QString& extraFilter=QString()) = 0;
@@ -126,6 +131,11 @@ class TrackModel {
     virtual void setDefaultSort(int sortColumn, Qt::SortOrder sortOrder) {
         m_iDefaultSortColumn = sortColumn;
         m_eDefaultSortOrder = sortOrder;
+    }
+
+    virtual bool isColumnSortable(int column) {
+        Q_UNUSED(column);
+        return true;
     }
 
     virtual int fieldIndex(const QString& fieldName) const {

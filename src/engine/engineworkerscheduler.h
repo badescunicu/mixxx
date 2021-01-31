@@ -2,7 +2,6 @@
 #define ENGINEWORKERSCHEDULER_H
 
 #include <QMutex>
-#include <QSet>
 #include <QThreadPool>
 #include <QWaitCondition>
 
@@ -20,8 +19,9 @@ class EngineWorkerScheduler : public QThread {
     EngineWorkerScheduler(QObject* pParent=NULL);
     virtual ~EngineWorkerScheduler();
 
+    void addWorker(EngineWorker* pWorker);
     void runWorkers();
-    void workerReady(EngineWorker* worker);
+    void workerReady();
 
   protected:
     void run();
@@ -31,7 +31,8 @@ class EngineWorkerScheduler : public QThread {
     // runWorkers was run. This should only be touched from the engine callback.
     bool m_bWakeScheduler;
 
-    FIFO<EngineWorker*> m_scheduleFIFO;
+    std::vector<EngineWorker*> m_workers;
+
     QWaitCondition m_waitCondition;
     QMutex m_mutex;
     volatile bool m_bQuit;

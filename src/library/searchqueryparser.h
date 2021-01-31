@@ -5,18 +5,22 @@
 #include <QString>
 #include <QtSql>
 
-#include "util.h"
-#include "trackinfoobject.h"
 #include "library/searchquery.h"
+#include "library/trackcollection.h"
+#include "track/track.h"
+#include "util/class.h"
 
 class SearchQueryParser {
   public:
-    SearchQueryParser(QSqlDatabase& database);
+    explicit SearchQueryParser(TrackCollection* pTrackCollection);
+
     virtual ~SearchQueryParser();
 
-    QueryNode* parseQuery(const QString& query,
-                          const QStringList& searchColumns,
-                          const QString& extraFilter) const;
+    std::unique_ptr<QueryNode> parseQuery(
+            const QString& query,
+            const QStringList& searchColumns,
+            const QString& extraFilter) const;
+
 
   private:
     void parseTokens(QStringList tokens,
@@ -26,7 +30,7 @@ class SearchQueryParser {
     QString getTextArgument(QString argument,
                             QStringList* tokens) const;
 
-    QSqlDatabase m_database;
+    TrackCollection* m_pTrackCollection;
     QStringList m_textFilters;
     QStringList m_numericFilters;
     QStringList m_specialFilters;

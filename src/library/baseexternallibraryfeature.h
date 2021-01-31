@@ -26,9 +26,11 @@ class BaseExternalLibraryFeature : public LibraryFeature {
         return NULL;
     }
     // Must be implemented by external Libraries not copied to Mixxx DB
-    virtual void appendTrackIdsFromRightClickIndex(QList<int>* trackIds, QString* pPlaylist);
+    virtual void appendTrackIdsFromRightClickIndex(QList<TrackId>* trackIds, QString* pPlaylist);
 
     QModelIndex m_lastRightClickedIndex;
+
+    TrackCollection* const m_pTrackCollection;
 
   private slots:
     void slotAddToAutoDJ();
@@ -38,7 +40,6 @@ class BaseExternalLibraryFeature : public LibraryFeature {
   private:
     void addToAutoDJ(bool bTop);
 
-    TrackCollection* m_pTrackCollection;
     QAction* m_pAddToAutoDJAction;
     QAction* m_pAddToAutoDJTopAction;
     QAction* m_pImportAsMixxxPlaylistAction;

@@ -7,6 +7,7 @@
 #include <QAbstractItemModel>
 #include <QList>
 #include <QModelIndex>
+#include <QTimer>
 #include <QVariant>
 
 class LibraryFeature;
@@ -14,8 +15,9 @@ class LibraryFeature;
 class SidebarModel : public QAbstractItemModel {
     Q_OBJECT
   public:
-    explicit SidebarModel(QObject* parent = 0);
-    virtual ~SidebarModel();
+    explicit SidebarModel(
+            QObject* parent = nullptr);
+    ~SidebarModel() override = default;
 
     void addLibraryFeature(LibraryFeature* feature);
     QModelIndex getDefaultSelection();
@@ -29,12 +31,14 @@ class SidebarModel : public QAbstractItemModel {
     int rowCount(const QModelIndex& parent = QModelIndex()) const;
     int columnCount(const QModelIndex& parent = QModelIndex()) const;
     QVariant data(const QModelIndex& index,
-                  int role = Qt::DisplayRole ) const;
+                  int role = Qt::DisplayRole) const;
     bool dropAccept(const QModelIndex& index, QList<QUrl> urls, QObject* pSource);
     bool dragMoveAccept(const QModelIndex& index, QUrl url);
-    virtual bool hasChildren ( const QModelIndex & parent = QModelIndex() ) const;
+    virtual bool hasChildren(const QModelIndex& parent = QModelIndex()) const;
+    bool hasTrackTable(const QModelIndex& index) const;
 
   public slots:
+    void pressed(const QModelIndex& index);
     void clicked(const QModelIndex& index);
     void doubleClicked(const QModelIndex& index);
     void rightClicked(const QPoint& globalPos, const QModelIndex& index);
@@ -42,10 +46,10 @@ class SidebarModel : public QAbstractItemModel {
 
     // Slots for every single QAbstractItemModel signal
     // void slotColumnsAboutToBeInserted(const QModelIndex& parent, int start, int end);
-    // void slotColumnsAboutToBeRemoved(const QModelIndex & parent, int start, int end);
-    // void slotColumnsInserted(const QModelIndex & parent, int start, int end);
-    // void slotColumnsRemoved(const QModelIndex & parent, int start, int end);
-    void slotDataChanged(const QModelIndex & topLeft, const QModelIndex & bottomRight);
+    // void slotColumnsAboutToBeRemoved(const QModelIndex& parent, int start, int end);
+    // void slotColumnsInserted(const QModelIndex& parent, int start, int end);
+    // void slotColumnsRemoved(const QModelIndex& parent, int start, int end);
+    void slotDataChanged(const QModelIndex& topLeft, const QModelIndex & bottomRight);
     //void slotHeaderDataChanged(Qt::Orientation orientation, int first, int last);
     // void slotLayoutAboutToBeChanged();
     // void slotLayoutChanged();
@@ -55,6 +59,7 @@ class SidebarModel : public QAbstractItemModel {
     void slotRowsAboutToBeRemoved(const QModelIndex& parent, int start, int end);
     void slotRowsInserted(const QModelIndex& parent, int start, int end);
     void slotRowsRemoved(const QModelIndex& parent, int start, int end);
+    void slotModelAboutToBeReset();
     void slotModelReset();
     void slotFeatureIsLoading(LibraryFeature*, bool selectFeature);
     void slotFeatureLoadingFinished(LibraryFeature*);
@@ -62,11 +67,20 @@ class SidebarModel : public QAbstractItemModel {
   signals:
     void selectIndex(const QModelIndex& index);
 
+  private slots:
+    void slotPressedUntilClickedTimeout();
+
   private:
     QModelIndex translateSourceIndex(const QModelIndex& parent);
     void featureRenamed(LibraryFeature*);
     QList<LibraryFeature*> m_sFeatures;
     unsigned int m_iDefaultSelectedIndex; /** Index of the item in the sidebar model to select at startup. */
+
+    QTimer* const m_pressedUntilClickedTimer;
+    QModelIndex m_pressedIndex;
+
+    void startPressedUntilClickedTimer(QModelIndex pressedIndex);
+    void stopPressedUntilClickedTimer();
 };
 
 #endif /* SIDEBARMODEL_H */

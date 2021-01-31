@@ -1,5 +1,6 @@
 #include "effects/native/bitcrushereffect.h"
-#include "util/math.h"
+
+#include "util/sample.h"
 
 // static
 QString BitCrusherEffect::getId() {
@@ -7,22 +8,29 @@ QString BitCrusherEffect::getId() {
 }
 
 // static
-EffectManifest BitCrusherEffect::getManifest() {
-    EffectManifest manifest;
-    manifest.setId(getId());
-    manifest.setName(QObject::tr("BitCrusher"));
-    manifest.setAuthor("The Mixxx Team");
-    manifest.setVersion("1.0");
-    manifest.setDescription("TODO");
+EffectManifestPointer BitCrusherEffect::getManifest() {
+    EffectManifestPointer pManifest(new EffectManifest());
+    pManifest->setId(getId());
+    pManifest->setName(QObject::tr("Bitcrusher"));
+    pManifest->setShortName(QObject::tr("Bitcrusher"));
+    pManifest->setAuthor("The Mixxx Team");
+    pManifest->setVersion("1.0");
+    pManifest->setDescription(QObject::tr(
+        "Adds noise by the reducing the bit depth and sample rate"));
+    pManifest->setEffectRampsFromDry(true);
+    pManifest->setMetaknobDefault(0.0);
 
-    EffectManifestParameter* depth = manifest.addParameter();
+    EffectManifestParameterPointer depth = pManifest->addParameter();
     depth->setId("bit_depth");
     depth->setName(QObject::tr("Bit Depth"));
-    depth->setDescription("TODO");
-    depth->setControlHint(EffectManifestParameter::CONTROL_KNOB_LOGARITHMIC);
-    depth->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
-    depth->setUnitsHint(EffectManifestParameter::UNITS_UNKNOWN);
-    depth->setDefaultLinkType(EffectManifestParameter::LINK_LINKED);
+    depth->setShortName(QObject::tr("Bit Depth"));
+    depth->setDescription(QObject::tr(
+        "The bit depth of the samples"));
+    depth->setControlHint(EffectManifestParameter::ControlHint::KNOB_LOGARITHMIC);
+    depth->setSemanticHint(EffectManifestParameter::SemanticHint::UNKNOWN);
+    depth->setUnitsHint(EffectManifestParameter::UnitsHint::UNKNOWN);
+    depth->setDefaultLinkType(EffectManifestParameter::LinkType::LINKED);
+    depth->setDefaultLinkInversion(EffectManifestParameter::LinkInversion::INVERTED);
     depth->setNeutralPointOnScale(1.0);
     depth->setDefault(16);
     // for values -1 0 +1
@@ -30,44 +38,44 @@ EffectManifest BitCrusherEffect::getManifest() {
     depth->setMinimum(2);
     depth->setMaximum(16);
 
-    EffectManifestParameter* frequency = manifest.addParameter();
+    EffectManifestParameterPointer frequency = pManifest->addParameter();
     frequency->setId("downsample");
     frequency->setName(QObject::tr("Downsampling"));
-    frequency->setDescription("TODO");
-    frequency->setControlHint(EffectManifestParameter::CONTROL_KNOB_LOGARITHMIC);
-    frequency->setSemanticHint(EffectManifestParameter::SEMANTIC_UNKNOWN);
-    frequency->setUnitsHint(EffectManifestParameter::UNITS_SAMPLERATE);
-    frequency->setDefaultLinkType(EffectManifestParameter::LINK_LINKED);
+    frequency->setShortName(QObject::tr("Down"));
+    frequency->setDescription(QObject::tr(
+        "The sample rate to which the signal is downsampled"));
+    frequency->setControlHint(EffectManifestParameter::ControlHint::KNOB_LOGARITHMIC);
+    frequency->setSemanticHint(EffectManifestParameter::SemanticHint::UNKNOWN);
+    frequency->setUnitsHint(EffectManifestParameter::UnitsHint::SAMPLERATE);
+    frequency->setDefaultLinkType(EffectManifestParameter::LinkType::LINKED);
+    frequency->setDefaultLinkInversion(EffectManifestParameter::LinkInversion::INVERTED);
     frequency->setNeutralPointOnScale(1.0);
     frequency->setDefault(1.0);
     frequency->setMinimum(0.02);
     frequency->setMaximum(1.0);
 
-    return manifest;
+    return pManifest;
 }
 
-BitCrusherEffect::BitCrusherEffect(EngineEffect* pEffect,
-                                   const EffectManifest& manifest)
+BitCrusherEffect::BitCrusherEffect(EngineEffect* pEffect)
         : m_pBitDepthParameter(pEffect->getParameterById("bit_depth")),
           m_pDownsampleParameter(pEffect->getParameterById("downsample")) {
-    Q_UNUSED(manifest);
 }
 
 BitCrusherEffect::~BitCrusherEffect() {
     //qDebug() << debugString() << "destroyed";
 }
 
-void BitCrusherEffect::processGroup(const QString& group,
-                                    BitCrusherGroupState* pState,
-                                    const CSAMPLE* pInput, CSAMPLE* pOutput,
-                                    const unsigned int numSamples,
-                                    const unsigned int sampleRate,
-                                    const GroupFeatureState& groupFeatures) {
-    Q_UNUSED(group);
+void BitCrusherEffect::processChannel(const ChannelHandle& handle,
+                                      BitCrusherGroupState* pState,
+                                      const CSAMPLE* pInput, CSAMPLE* pOutput,
+                                      const mixxx::EngineParameters& bufferParameters,
+                                      const EffectEnableState enableState,
+                                      const GroupFeatureState& groupFeatures) {
+    Q_UNUSED(handle);
     Q_UNUSED(groupFeatures);
-    Q_UNUSED(sampleRate);
-    // TODO(rryan) this is broken. it needs to take into account the sample
-    // rate.
+    Q_UNUSED(enableState); // no need to ramp, it is just a bitcrusher ;-)
+
     const CSAMPLE downsample = m_pDownsampleParameter ?
             m_pDownsampleParameter->value() : 0.0;
 
@@ -80,16 +88,17 @@ void BitCrusherEffect::processGroup(const QString& group,
     // rarely used, to achieve equal loudness and maximum dynamic
     const CSAMPLE gainCorrection = (17 - bit_depth) / 8;
 
-    const int kChannels = 2;
-    for (unsigned int i = 0; i < numSamples; i += kChannels) {
+    for (unsigned int i = 0;
+            i < bufferParameters.samplesPerBuffer();
+            i += bufferParameters.channelCount()) {
         pState->accumulator += downsample;
 
         if (pState->accumulator >= 1.0) {
             pState->accumulator -= 1.0;
             if (bit_depth < 16) {
 
-                pState->hold_l = floorf(math_clamp(pInput[i] * gainCorrection, -1.0f, 1.0f) * scale + 0.5f) / scale / gainCorrection;
-                pState->hold_r = floorf(math_clamp(pInput[i+1] * gainCorrection, -1.0f, 1.0f) * scale + 0.5f) / scale / gainCorrection;
+                pState->hold_l = floorf(SampleUtil::clampSample(pInput[i] * gainCorrection) * scale + 0.5f) / scale / gainCorrection;
+                pState->hold_r = floorf(SampleUtil::clampSample(pInput[i+1] * gainCorrection) * scale + 0.5f) / scale / gainCorrection;
             } else {
                 // Mixxx float has 24 bit depth, Audio CDs are 16 bit
                 // here we do not change the depth

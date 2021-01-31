@@ -7,7 +7,7 @@
 class SizeAwareLayout : public QStackedLayout
 {
   public:
-    QSize minimumSize() const
+    QSize minimumSize() const override
     {
         QSize s(0, 0) ;
         QWidget *w = widget(0);
@@ -28,7 +28,7 @@ class SizeAwareLayout : public QStackedLayout
 
         QWidget *wc = widget(i);
         bool notFit = false;
-        if (i > 0 ) {
+        if (i > 0) {
             // Check minimum, but not for the smallest, it is the fallback
             notFit =  wc->minimumHeight() > s.height() || wc->minimumWidth() > s.width();
         }
@@ -75,9 +75,6 @@ WSizeAwareStack::WSizeAwareStack(QWidget* parent)
           WBaseWidget(this) {
     m_layout = new SizeAwareLayout();
     setLayout(m_layout);
-}
-
-WSizeAwareStack::~WSizeAwareStack() {
 }
 
 int WSizeAwareStack::addWidget(QWidget *widget) {

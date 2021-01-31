@@ -1,131 +1,105 @@
 // Tue Haste Andersen <haste@diku.dk>, (C) 2003
 
-#include <QTime>
+#include <QStringBuilder>
 
-#include "wnumberpos.h"
-#include "controlobject.h"
-#include "controlobjectthread.h"
+#include "widget/wnumberpos.h"
+#include "control/controlobject.h"
+#include "control/controlproxy.h"
 #include "util/math.h"
+#include "util/duration.h"
 
 WNumberPos::WNumberPos(const char* group, QWidget* parent)
         : WNumber(parent),
-          m_dOldValue(0.0),
-          m_dTrackSamples(0.0),
-          m_dTrackSampleRate(0.0),
-          m_bRemain(false) {
-    m_qsText = "";
+          m_dOldTimeElapsed(0.0) {
+    m_pTimeElapsed = new ControlProxy(group, "time_elapsed", this);
+    m_pTimeElapsed->connectValueChanged(SLOT(slotSetTimeElapsed(double)));
+    m_pTimeRemaining = new ControlProxy(group, "time_remaining", this);
+    m_pTimeRemaining->connectValueChanged(SLOT(slotTimeRemainingUpdated(double)));
 
-    m_pShowTrackTimeRemaining = new ControlObjectThread(
-            "[Controls]", "ShowDurationRemaining");
+    m_pShowTrackTimeRemaining = new ControlProxy(
+            "[Controls]", "ShowDurationRemaining", this);
     m_pShowTrackTimeRemaining->connectValueChanged(
-            this, SLOT(slotSetRemain(double)));
-    slotSetRemain(m_pShowTrackTimeRemaining->get());
-
-    // We use the engine's playposition value directly because the parameter
-    // normalization done by the widget system used to be unusable for this
-    // because the range of playposition was -0.14 to 1.14 in 1.11.x. As a
-    // result, the <Connection> parameter is no longer necessary in skin
-    // definitions, but leaving it in is harmless.
-    m_pVisualPlaypos = new ControlObjectThread(group, "playposition");
-    m_pVisualPlaypos->connectValueChanged(this, SLOT(slotSetValue(double)));
-
-    m_pTrackSamples = new ControlObjectThread(
-            group, "track_samples");
-    m_pTrackSamples->connectValueChanged(
-            this, SLOT(slotSetTrackSamples(double)));
-
-    // Tell the CO to re-emit its value since we could be created after it was
-    // set to a valid value.
-    m_pTrackSamples->emitValueChanged();
-
-    m_pTrackSampleRate = new ControlObjectThread(
-            group, "track_samplerate");
-    m_pTrackSampleRate->connectValueChanged(
-            this, SLOT(slotSetTrackSampleRate(double)));
-
-    // Tell the CO to re-emit its value since we could be created after it was
-    // set to a valid value.
-    m_pTrackSampleRate->emitValueChanged();
-
-    slotSetValue(m_pVisualPlaypos->get());
-}
-
-WNumberPos::~WNumberPos() {
-    delete m_pTrackSampleRate;
-    delete m_pTrackSamples;
-    delete m_pVisualPlaypos;
-    delete m_pShowTrackTimeRemaining;
+            SLOT(slotSetDisplayMode(double)));
+    slotSetDisplayMode(m_pShowTrackTimeRemaining->get());
 }
 
 void WNumberPos::mousePressEvent(QMouseEvent* pEvent) {
     bool leftClick = pEvent->buttons() & Qt::LeftButton;
 
     if (leftClick) {
-        setRemain(!m_bRemain);
-        m_pShowTrackTimeRemaining->slotSet(m_bRemain ? 1.0 : 0.0);
+        // Cycle through display modes
+        if (m_displayMode == TrackTime::DisplayMode::Elapsed) {
+            m_displayMode = TrackTime::DisplayMode::Remaining;
+        } else if (m_displayMode == TrackTime::DisplayMode::Remaining) {
+            m_displayMode = TrackTime::DisplayMode::ElapsedAndRemaining;
+        } else if (m_displayMode == TrackTime::DisplayMode::ElapsedAndRemaining) {
+            m_displayMode = TrackTime::DisplayMode::Elapsed;
+        }
+
+        m_pShowTrackTimeRemaining->set(static_cast<double>(m_displayMode));
+        slotSetTimeElapsed(m_dOldTimeElapsed);
     }
 }
 
-void WNumberPos::slotSetTrackSamples(double dSamples) {
-    m_dTrackSamples = dSamples;
-    slotSetValue(m_dOldValue);
-}
-
-void WNumberPos::slotSetTrackSampleRate(double dSampleRate) {
-    m_dTrackSampleRate = dSampleRate;
-    slotSetValue(m_dOldValue);
-}
-
+// Reimplementing WNumber::setValue
 void WNumberPos::setValue(double dValue) {
     // Ignore midi-scaled signals from the skin connection.
     Q_UNUSED(dValue);
     // Update our value with the old value.
-    slotSetValue(m_dOldValue);
+    slotSetTimeElapsed(m_dOldTimeElapsed);
 }
 
-void WNumberPos::slotSetValue(double dValue) {
-    m_dOldValue = dValue;
+void WNumberPos::slotSetTimeElapsed(double dTimeElapsed) {
+    double dTimeRemaining = m_pTimeRemaining->get();
 
-    double valueMillis = 0.0;
-    double durationMillis = 0.0;
-    if (m_dTrackSamples > 0 && m_dTrackSampleRate > 0) {
-        double dDuration = m_dTrackSamples / m_dTrackSampleRate / 2.0;
-        valueMillis = dValue * 500.0 * m_dTrackSamples / m_dTrackSampleRate;
-        durationMillis = dDuration * 1000.0;
-        if (m_bRemain)
-            valueMillis = math_max(durationMillis - valueMillis, 0.0);
+    if (m_displayMode == TrackTime::DisplayMode::Elapsed) {
+        if (dTimeElapsed >= 0.0) {
+            setText(mixxx::Duration::formatSeconds(
+                        dTimeElapsed, mixxx::Duration::Precision::CENTISECONDS));
+        } else {
+            setText(QLatin1String("-") % mixxx::Duration::formatSeconds(
+                        -dTimeElapsed, mixxx::Duration::Precision::CENTISECONDS));
+        }
+    } else if (m_displayMode == TrackTime::DisplayMode::Remaining) {
+        setText(QLatin1String("-") % mixxx::Duration::formatSeconds(
+                    dTimeRemaining, mixxx::Duration::Precision::CENTISECONDS));
+    } else if (m_displayMode == TrackTime::DisplayMode::ElapsedAndRemaining) {
+        if (dTimeElapsed >= 0.0) {
+            setText(mixxx::Duration::formatSeconds(
+                        dTimeElapsed, mixxx::Duration::Precision::CENTISECONDS)
+                    % QLatin1String("  -") %
+                    mixxx::Duration::formatSeconds(
+                        dTimeRemaining, mixxx::Duration::Precision::CENTISECONDS));
+        } else {
+            setText(QLatin1String("-") % mixxx::Duration::formatSeconds(
+                        -dTimeElapsed, mixxx::Duration::Precision::CENTISECONDS)
+                    % QLatin1String("  -") %
+                    mixxx::Duration::formatSeconds(
+                        dTimeRemaining, mixxx::Duration::Precision::CENTISECONDS));
+        }
     }
+    m_dOldTimeElapsed = dTimeElapsed;
+}
 
-    QString valueString;
-    if (valueMillis >= 0) {
-        QTime valueTime = QTime().addMSecs(valueMillis);
-        valueString = valueTime.toString((valueTime.hour() >= 1) ? "hh:mm:ss.zzz" : "mm:ss.zzz");
+// m_pTimeElapsed is not updated when paused at the beginning of a track,
+// but m_pTimeRemaining is updated in that case. So, call slotSetTimeElapsed to
+// update this widget's text.
+void WNumberPos::slotTimeRemainingUpdated(double dTimeRemaining) {
+    Q_UNUSED(dTimeRemaining);
+    double dTimeElapsed = m_pTimeElapsed->get();
+    if (dTimeElapsed == 0.0) {
+        slotSetTimeElapsed(dTimeElapsed);
+    }
+}
+
+void WNumberPos::slotSetDisplayMode(double remain) {
+    if (remain == 1.0) {
+        m_displayMode = TrackTime::DisplayMode::Remaining;
+    } else if (remain == 2.0) {
+        m_displayMode = TrackTime::DisplayMode::ElapsedAndRemaining;
     } else {
-        QTime valueTime = QTime().addMSecs(0 - valueMillis);
-        valueString = valueTime.toString((valueTime.hour() >= 1) ? "-hh:mm:ss.zzz" : "-mm:ss.zzz");
+        m_displayMode = TrackTime::DisplayMode::Elapsed;
     }
 
-    // The format string gives us one extra digit of millisecond precision than
-    // we care about. Slice it off.
-    valueString = valueString.left(valueString.length() - 1);
-
-    setText(QString("%1%2").arg(m_qsText, valueString));
-}
-
-void WNumberPos::slotSetRemain(double remain) {
-    setRemain(remain > 0.0);
-}
-
-void WNumberPos::setRemain(bool bRemain)
-{
-    m_bRemain = bRemain;
-
-    // Shift display state between showing position and remaining
-    if (m_bRemain)
-        m_qsText = "-";
-    else
-        m_qsText = "";
-
-    // Have the widget redraw itself with its current value.
-    slotSetValue(m_dOldValue);
+    slotSetTimeElapsed(m_dOldTimeElapsed);
 }

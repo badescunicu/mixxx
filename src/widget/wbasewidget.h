@@ -10,7 +10,7 @@ class ControlParameterWidgetConnection;
 
 class WBaseWidget {
   public:
-    WBaseWidget(QWidget* pWidget);
+    explicit WBaseWidget(QWidget* pWidget);
     virtual ~WBaseWidget();
 
     virtual void Init();
@@ -54,6 +54,14 @@ class WBaseWidget {
     double getControlParameterRight() const;
     double getControlParameterDisplay() const;
 
+    inline const QList<ControlParameterWidgetConnection*>& connections() const {
+        return m_connections;
+    };
+    inline const QList<ControlParameterWidgetConnection*>& leftConnections() const {
+        return m_leftConnections;
+    };
+
+
   protected:
     // Whenever a connected control is changed, onConnectedControlChanged is
     // called. This allows the widget implementor to respond to the change and
@@ -79,7 +87,6 @@ class WBaseWidget {
     void updateTooltip();
     virtual void fillDebugTooltip(QStringList* debug);
 
-  protected:
     QList<ControlParameterWidgetConnection*> m_connections;
     ControlParameterWidgetConnection* m_pDisplayConnection;
     QList<ControlParameterWidgetConnection*> m_leftConnections;

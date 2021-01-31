@@ -17,8 +17,12 @@ String.prototype.toInt = function() {
 
 // Causes script print() calls to appear in the log file as well
 print = function(string) {
-	engine.log(string);
+    engine.log(string);
 }
+
+var printObject = function (object) {
+    print(JSON.stringify(object, null, 2));
+};
 
 // ----------------- Generic functions ---------------------
 
@@ -92,6 +96,56 @@ script.deckFromGroup = function (group) {
 }
 
 /* -------- ------------------------------------------------------
+     script.bindConnections
+   Purpose: Binds multiple controls at once. See an example in Pioneer-DDJ-SB-scripts.js
+   Input:   The group whose controls are to be bound and an object
+            (controlstToFunctions) where the properties' names are
+            controls names and the values are the functions those
+            controls will be bound to.
+   Output:  none
+   -------- ------------------------------------------------------ */
+script.bindConnections = function (group, controlsToFunctions, remove) {
+    var control;
+    remove = (remove === undefined) ? false : remove;
+
+    for (control in controlsToFunctions) {
+        engine.connectControl(group, control, controlsToFunctions[control], remove);
+        if (!remove) {
+            engine.trigger(group, control);
+        }
+    }
+}
+
+/* -------- ------------------------------------------------------
+     script.toggleControl
+   Purpose: Toggles an engine value
+   Input:   Group and control names
+   Output:  none
+   -------- ------------------------------------------------------ */
+script.toggleControl = function (group, control) {
+    engine.setValue(group, control, !(engine.getValue(group, control)));
+}
+
+/* -------- ------------------------------------------------------
+     script.toggleControl
+   Purpose: Triggers an engine value and resets it back to 0 after a delay
+            This is helpful for mapping encoder turns to controls that are
+            represented by buttons in skins so the skin button lights up
+            briefly but does not stay lit.
+   Input:   Group and control names, delay in milliseconds (optional)
+   Output:  none
+   -------- ------------------------------------------------------ */
+script.triggerControl = function (group, control, delay) {
+    if (typeof delay !== 'number') {
+        delay = 200;
+    }
+    engine.setValue(group, control, 1);
+    engine.beginTimer(delay, function () {
+        engine.setValue(group, control, 0);
+    }, true);
+}
+
+/* -------- ------------------------------------------------------
      script.absoluteLin
    Purpose: Maps an absolute linear control value to a linear Mixxx control
             value (like Volume: 0..1)
@@ -101,12 +155,48 @@ script.deckFromGroup = function (group) {
    Output:  MixxxControl value corresponding to the knob position
    -------- ------------------------------------------------------ */
 script.absoluteLin = function (value, low, high, min, max) {
-    if (!min) min = 0;
-    if (!max) max = 127;
-    if (value <= min) return low;
-    if (value >= max) return high;
-    else return ((((high - low) / (max-min)) * (value-min)) + low);
+    if (!min) {
+        min = 0;
+    }
+    if (!max) {
+        max = 127;
+    }
+    
+    if (value <= min) {
+        return low;
+    } else if (value >= max) {
+        return high;
+    } else {
+        return ((((high - low) / (max-min)) * (value-min)) + low);
+    }
 }
+
+/* -------- ------------------------------------------------------
+     script.absoluteLinInverse
+   Purpose: Maps a linear Mixxx control value (like balance: -1..1) to an absolute linear value
+            (inverse of the above function)
+   Input:   Control value (e.g. a knob,) MixxxControl values for the lowest and
+            highest points, lowest knob value, highest knob value
+            (Default knob values are standard MIDI 0..127)
+   Output:  Linear value corresponding to the knob position
+   -------- ------------------------------------------------------ */
+script.absoluteLinInverse = function (value, low, high, min, max) {
+    if (!min) {
+        min = 0;
+    }
+    if (!max) {
+        max = 127;
+    }
+    var result = (((value-low)*(max-min))/(high-low)) + min
+    if (result < min) {
+        return min;
+    } else if (result > max) {
+        return max;
+    } else {
+        return result;
+    }
+}
+
 
 /* -------- ------------------------------------------------------
      script.absoluteNonLin
@@ -118,14 +208,55 @@ script.absoluteLin = function (value, low, high, min, max) {
    Output:  MixxxControl value corresponding to the knob position
    -------- ------------------------------------------------------ */
 script.absoluteNonLin = function (value, low, mid, high, min, max) {
-    if (!min) min = 0;
-    if (!max) max = 127;
+    if (!min) {
+        min = 0;
+    }
+    if (!max) {
+        max = 127;
+    }
     var center = (max-min)/2;
-    if (value==center || value==Math.round(center))
+    if (value==center || value==Math.round(center)) {
         return mid;
-    if (value<center)
+    } else if (value<center) {
         return low+(value/(center/(mid-low)));
-    return mid+((value-center)/(center/(high-mid)));
+    } else {
+        return mid+((value-center)/(center/(high-mid)));
+    }
+}
+
+/* -------- ------------------------------------------------------
+     script.absoluteNonLinInverse
+ Purpose: Maps a non-linear Mixxx control to an absolute linear value (inverse of the above function).
+ Helpful for sending MIDI messages to controllers and comparing non-linear Mixxx controls to incoming MIDI values.
+ Input:  MixxxControl value; lowest, middle, and highest MixxxControl value;
+ bottom of output range, top of output range. (Default output range is standard MIDI 0..127)
+ Output: MixxxControl value scaled to output range
+ -------- ------------------------------------------------------ */
+script.absoluteNonLinInverse = function (value, low, mid, high, min, max) {
+    if (!min) {
+        min = 0;
+    }
+    if (!max) {
+        max = 127;
+    }
+    var center = (max-min)/2;
+    var result;
+    
+    if (value==mid) {
+        return center;
+    } else if (value<mid) {
+        result = (center/(mid-low)) * (value-low);
+    } else {
+        result = center + (center/(high-mid)) * (value-mid);
+    }
+    
+    if (result < min) {
+        return min;
+    } else if (result > max) {
+        return max;
+    } else {
+        return result;
+    }
 }
 
 /* -------- ------------------------------------------------------
@@ -157,9 +288,9 @@ script.loopMove = function (group,direction,numberOfBeats) {
     if (!numberOfBeats || numberOfBeats==0) numberOfBeats = 0.5;
 
     if (direction < 0) {
-        engine.setValue(group, "loop_move", -number_of_beats);
+        engine.setValue(group, "loop_move", -numberOfBeats);
     } else {
-        engine.setValue(group, "loop_move", number_of_beats);
+        engine.setValue(group, "loop_move", numberOfBeats);
     }
 }
 
@@ -174,7 +305,7 @@ script.loopMove = function (group,direction,numberOfBeats) {
    -------- ------------------------------------------------------ */
 // TODO: Is this still useful now that MidiController.cpp properly handles these?
 script.midiPitch = function (LSB, MSB, status) {
-    if ((status & 0xF0) != 0xE0) {  // Mask the upper nybble so we can check the opcode regardless of the channel
+    if ((status & 0xF0) !== 0xE0) {  // Mask the upper nybble so we can check the opcode regardless of the channel
         print("Script.midiPitch: Error, not a MIDI pitch (0xEn) message: "+status);
         return false;
     }
@@ -190,12 +321,21 @@ script.midiPitch = function (LSB, MSB, status) {
    Purpose: wrapper around engine.spinback() that can be directly mapped
             from xml for a spinback effect
             e.g: <key>script.spinback</key>
-   Input:   channel, control, value, status, group
+   Input:   channel, control, value, status, group, factor (optional), start rate (optional)
    Output:  none
    -------- ------------------------------------------------------ */
-script.spinback = function(channel, control, value, status, group) {
+script.spinback = function(channel, control, value, status, group, factor, rate) {
+    // if brake is called without defined factor and rate, reset to defaults
+    if (factor === undefined && rate === undefined) {
+        factor = 1;
+        rate = -10;
+    }
+    // if brake is called without defined rate, reset to default
+    if (rate === undefined) {
+        rate = -10;
+    }
     // disable on note-off or zero value note/cc
-    engine.spinback(parseInt(group.substring(8,9)), ((status & 0xF0) != 0x80 && value > 0));
+    engine.spinback(parseInt(group.substring(8,9)), ((status & 0xF0) !== 0x80 && value > 0), factor, rate);
 }
 
 /* -------- ------------------------------------------------------
@@ -203,12 +343,34 @@ script.spinback = function(channel, control, value, status, group) {
    Purpose: wrapper around engine.brake() that can be directly mapped
             from xml for a brake effect
             e.g: <key>script.brake</key>
-   Input:   channel, control, value, status, group
+   Input:   channel, control, value, status, group, factor (optional)
    Output:  none
    -------- ------------------------------------------------------ */
-script.brake = function(channel, control, value, status, group) {
-    // disable on note-off or zero value note/cc
-    engine.brake(parseInt(group.substring(8,9)), ((status & 0xF0) != 0x80 && value > 0));
+script.brake = function(channel, control, value, status, group, factor) {
+    // if brake is called without factor defined, reset to default
+    if (factor === undefined) {
+        factor = 1;
+    }
+    // disable on note-off or zero value note/cc, use default decay rate '1'
+    engine.brake(parseInt(group.substring(8,9)), ((status & 0xF0) !== 0x80 && value > 0), factor);
+}
+
+/* -------- ------------------------------------------------------
+     script.softStart
+   Purpose: wrapper around engine.softStart() that can be directly mapped
+            from xml to start and accelerate a deck from zero to full rate
+            defined by pitch slider, can also interrupt engine.brake()
+            e.g: <key>script.softStart</key>
+   Input:   channel, control, value, status, group, acceleration factor (optional)
+   Output:  none
+   -------- ------------------------------------------------------ */
+script.softStart = function(channel, control, value, status, group, factor) {
+    // if softStart is called without factor defined, reset to default
+    if (factor === undefined) {
+        factor = 1;
+    }
+    // disable on note-off or zero value note/cc, use default increase rate '1'
+    engine.softStart(parseInt(group.substring(8,9)), ((status & 0xF0) !== 0x80 && value > 0), factor);
 }
 
 // bpm - Used for tapping the desired BPM for a deck
@@ -248,8 +410,16 @@ bpm.tapButton = function(deck) {
     fRateScale = (fRateScale-1.)/engine.getValue("[Channel"+deck+"]","rateRange");
 
     engine.setValue("[Channel"+deck+"]","rate",fRateScale * engine.getValue("[Channel"+deck+"]","rate_dir"));
-//     print("Script: BPM="+average);
+//     print("Script: BPM="+average+" setting to "+fRateScale);
 }
+
+// ----------------- Common regular expressions --------------------------
+script.samplerRegEx = /^\[Sampler(\d+)\]$/ ;
+script.channelRegEx = /^\[Channel(\d+)\]$/ ;
+script.eqRegEx = /^\[EqualizerRack1_(\[.*\])_Effect1\]$/ ;
+script.quickEffectRegEx = /^\[QuickEffectRack1_(\[.*\])\]$/ ;
+script.effectUnitRegEx = /^\[EffectRack1_EffectUnit(\d+)\]$/ ;
+script.individualEffectRegEx = /^\[EffectRack1_EffectUnit(\d+)_Effect(\d+)\]$/ ;
 
 // ----------------- Object definitions --------------------------
 

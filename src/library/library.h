@@ -10,11 +10,16 @@
 #include <QList>
 #include <QObject>
 #include <QAbstractItemModel>
+#include <QFont>
 
-#include "configobject.h"
-#include "trackinfoobject.h"
+#include "preferences/usersettings.h"
+#include "track/globaltrackcache.h"
 #include "recording/recordingmanager.h"
 #include "analysisfeature.h"
+#include "library/coverartcache.h"
+#include "library/setlogfeature.h"
+#include "library/scanner/libraryscanner.h"
+#include "util/db/dbconnectionpool.h"
 
 class TrackModel;
 class TrackCollection;
@@ -28,29 +33,42 @@ class MixxxLibraryFeature;
 class PlaylistFeature;
 class CrateFeature;
 class LibraryControl;
-class MixxxKeyboard;
+class KeyboardEventFilter;
+class PlayerManagerInterface;
 
-class Library : public QObject {
+class Library: public QObject,
+    public virtual /*implements*/ GlobalTrackCacheSaver {
     Q_OBJECT
-public:
+
+  public:
+    static const QString kConfigGroup;
+
+    static const ConfigKey kConfigKeyRepairDatabaseOnNextRestart;
+
     Library(QObject* parent,
-            ConfigObject<ConfigValue>* pConfig,
+            UserSettingsPointer pConfig,
+            mixxx::DbConnectionPoolPtr pDbConnectionPool,
+            PlayerManagerInterface* pPlayerManager,
             RecordingManager* pRecordingManager);
-    virtual ~Library();
+    ~Library() override;
+
+    mixxx::DbConnectionPoolPtr dbConnectionPool() const {
+        return m_pDbConnectionPool;
+    }
 
     void bindWidget(WLibrary* libraryWidget,
-                    MixxxKeyboard* pKeyboard);
+                    KeyboardEventFilter* pKeyboard);
     void bindSidebarWidget(WLibrarySidebar* sidebarWidget);
 
     void addFeature(LibraryFeature* feature);
     QStringList getDirs();
 
-    // TODO(rryan) Transitionary only -- the only reason this is here is so the
-    // waveform widgets can signal to a player to load a track. This can be
-    // fixed by moving the waveform renderers inside player and connecting the
-    // signals directly.
-    TrackCollection* getTrackCollection() {
-        return m_pTrackCollection;
+    inline int getTrackTableRowHeight() const {
+        return m_iTrackTableRowHeight;
+    }
+
+    inline const QFont& getTrackTableFont() const {
+        return m_trackTableFont;
     }
 
     //static Library* buildDefaultLibrary();
@@ -60,6 +78,12 @@ public:
         HideTracks,
         PurgeTracks
     };
+
+    static const int kDefaultRowHeightPx;
+
+    void setFont(const QFont& font);
+    void setRowHeight(int rowHeight);
+    void setEditMedatataSelectedClick(bool enable);
 
   public slots:
     void slotShowTrackModel(QAbstractItemModel* model);
@@ -76,6 +100,10 @@ public:
     void slotRequestRelocateDir(QString previousDirectory, QString newDirectory);
     void onSkinLoadFinished();
 
+    void scan() {
+        m_scanner.scan();
+    }
+
   signals:
     void showTrackModel(QAbstractItemModel* model);
     void switchToView(const QString& view);
@@ -85,11 +113,30 @@ public:
     void search(const QString& text);
     void searchCleared();
     void searchStarting();
+    // emit this signal to enable/disable the cover art widget
+    void enableCoverArtDisplay(bool);
+    void trackSelected(TrackPointer pTrack);
+
+    void setTrackTableFont(const QFont& font);
+    void setTrackTableRowHeight(int rowHeight);
+    void setSelectedClick(bool enable);
+
+    // Emitted when a library scan starts and finishes.
+    void scanStarted();
+    void scanFinished();
 
   private:
-    ConfigObject<ConfigValue>* m_pConfig;
+    // Callback for GlobalTrackCache
+    void saveCachedTrack(Track* pTrack) noexcept override;
+
+    const UserSettingsPointer m_pConfig;
+
+    // The Mixxx database connection pool
+    const mixxx::DbConnectionPoolPtr m_pDbConnectionPool;
+
     SidebarModel* m_pSidebarModel;
     TrackCollection* m_pTrackCollection;
+    LibraryControl* m_pLibraryControl;
     QList<LibraryFeature*> m_features;
     const static QString m_sTrackViewName;
     const static QString m_sAutoDJViewName;
@@ -97,8 +144,11 @@ public:
     PlaylistFeature* m_pPlaylistFeature;
     CrateFeature* m_pCrateFeature;
     AnalysisFeature* m_pAnalysisFeature;
-    LibraryControl* m_pLibraryControl;
-    RecordingManager* m_pRecordingManager;
+    LibraryScanner m_scanner;
+    QFont m_trackTableFont;
+    int m_iTrackTableRowHeight;
+    bool m_editMetadataSelectedClick;
+    QScopedPointer<ControlObject> m_pKeyNotation;
 };
 
 #endif /* LIBRARY_H */

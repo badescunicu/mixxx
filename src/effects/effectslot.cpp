@@ -1,46 +1,42 @@
 #include "effects/effectslot.h"
+#include "effects/effectxmlelements.h"
 
-#include "controlpushbutton.h"
-#include "controlobjectslave.h"
+#include <QDebug>
+
+#include "control/controlpushbutton.h"
+#include "control/controlencoder.h"
+#include "control/controlproxy.h"
+#include "util/math.h"
+#include "util/xml.h"
 
 // The maximum number of effect parameters we're going to support.
-const unsigned int kDefaultMaxParameters = 8;
+const unsigned int kDefaultMaxParameters = 16;
 
-EffectSlot::EffectSlot(const unsigned int iRackNumber,
+EffectSlot::EffectSlot(const QString& group,
                        const unsigned int iChainNumber,
                        const unsigned int iEffectnumber)
-        : m_iRackNumber(iRackNumber),
-          m_iChainNumber(iChainNumber),
+        : m_iChainNumber(iChainNumber),
           m_iEffectNumber(iEffectnumber),
-          // The control group names are 1-indexed while internally everything
-          // is 0-indexed.
-          m_group(formatGroupString(m_iRackNumber, m_iChainNumber,
-                                    m_iEffectNumber)) {
+          m_group(group) {
     m_pControlLoaded = new ControlObject(ConfigKey(m_group, "loaded"));
-    m_pControlLoaded->connectValueChangeRequest(
-        this, SLOT(slotLoaded(double)));
+    m_pControlLoaded->setReadOnly();
 
     m_pControlNumParameters = new ControlObject(ConfigKey(m_group, "num_parameters"));
-    m_pControlNumParameters->connectValueChangeRequest(
-        this, SLOT(slotNumParameters(double)));
+    m_pControlNumParameters->setReadOnly();
 
     m_pControlNumParameterSlots = new ControlObject(ConfigKey(m_group, "num_parameterslots"));
-    m_pControlNumParameterSlots->connectValueChangeRequest(
-        this, SLOT(slotNumParameterSlots(double)));
+    m_pControlNumParameterSlots->setReadOnly();
 
     m_pControlNumButtonParameters = new ControlObject(ConfigKey(m_group, "num_button_parameters"));
-    m_pControlNumButtonParameters->connectValueChangeRequest(
-        this, SLOT(slotNumParameters(double)));
+    m_pControlNumButtonParameters->setReadOnly();
 
     m_pControlNumButtonParameterSlots = new ControlObject(ConfigKey(m_group, "num_button_parameterslots"));
-    m_pControlNumButtonParameterSlots->connectValueChangeRequest(
-        this, SLOT(slotNumParameterSlots(double)));
+    m_pControlNumButtonParameterSlots->setReadOnly();
 
+    // Default to disabled to prevent accidental activation of effects
+    // at the beginning of a set.
     m_pControlEnabled = new ControlPushButton(ConfigKey(m_group, "enabled"));
     m_pControlEnabled->setButtonMode(ControlPushButton::POWERWINDOW);
-    // Default to enabled. The skin might not show these buttons.
-    m_pControlEnabled->setDefaultValue(true);
-    m_pControlEnabled->set(true);
     connect(m_pControlEnabled, SIGNAL(valueChanged(double)),
             this, SLOT(slotEnabled(double)));
 
@@ -53,7 +49,7 @@ EffectSlot::EffectSlot(const unsigned int iRackNumber,
             this, SLOT(slotPrevEffect(double)));
 
     // Ignoring no-ops is important since this is for +/- tickers.
-    m_pControlEffectSelector = new ControlObject(ConfigKey(m_group, "effect_selector"), false);
+    m_pControlEffectSelector = new ControlEncoder(ConfigKey(m_group, "effect_selector"), false);
     connect(m_pControlEffectSelector, SIGNAL(valueChanged(double)),
             this, SLOT(slotEffectSelector(double)));
 
@@ -66,10 +62,13 @@ EffectSlot::EffectSlot(const unsigned int iRackNumber,
         addEffectButtonParameterSlot();
     }
 
-    QString effectUnitGroup =  QString("[EffectRack%1_EffectUnit%2]").arg(
-        QString::number(iRackNumber+1), QString::number(iChainNumber+1));
+    m_pControlMetaParameter = new ControlPotmeter(ConfigKey(m_group, "meta"), 0.0, 1.0);
+    connect(m_pControlMetaParameter, SIGNAL(valueChanged(double)),
+            this, SLOT(slotEffectMetaParameter(double)));
+    m_pControlMetaParameter->set(0.0);
+    m_pControlMetaParameter->setDefaultValue(0.0);
 
-    m_pCoSuper = new ControlObjectSlave(ConfigKey(effectUnitGroup, "parameter"));
+    m_pSoftTakeover = new SoftTakeover();
 
     clear();
 }
@@ -88,25 +87,24 @@ EffectSlot::~EffectSlot() {
     delete m_pControlEffectSelector;
     delete m_pControlClear;
     delete m_pControlEnabled;
-    delete m_pCoSuper;
+    delete m_pControlMetaParameter;
+    delete m_pSoftTakeover;
 }
 
 EffectParameterSlotPointer EffectSlot::addEffectParameterSlot() {
     EffectParameterSlotPointer pParameter = EffectParameterSlotPointer(
-        new EffectParameterSlot(m_iRackNumber, m_iChainNumber, m_iEffectNumber,
-                                m_parameters.size()));
+            new EffectParameterSlot(m_group, m_parameters.size()));
     m_parameters.append(pParameter);
-    m_pControlNumParameterSlots->setAndConfirm(
+    m_pControlNumParameterSlots->forceSet(
             m_pControlNumParameterSlots->get() + 1);
     return pParameter;
 }
 
 EffectButtonParameterSlotPointer EffectSlot::addEffectButtonParameterSlot() {
     EffectButtonParameterSlotPointer pParameter = EffectButtonParameterSlotPointer(
-        new EffectButtonParameterSlot(m_iRackNumber, m_iChainNumber, m_iEffectNumber,
-                                m_buttonParameters.size()));
+            new EffectButtonParameterSlot(m_group, m_buttonParameters.size()));
     m_buttonParameters.append(pParameter);
-    m_pControlNumButtonParameterSlots->setAndConfirm(
+    m_pControlNumButtonParameterSlots->forceSet(
             m_pControlNumButtonParameterSlots->get() + 1);
     return pParameter;
 }
@@ -121,24 +119,6 @@ unsigned int EffectSlot::numParameterSlots() const {
 
 unsigned int EffectSlot::numButtonParameterSlots() const {
     return m_buttonParameters.size();
-}
-
-void EffectSlot::slotLoaded(double v) {
-    Q_UNUSED(v);
-    //qDebug() << debugString() << "slotLoaded" << v;
-    qWarning() << "WARNING: loaded is a read-only control.";
-}
-
-void EffectSlot::slotNumParameters(double v) {
-    Q_UNUSED(v);
-    //qDebug() << debugString() << "slotNumParameters" << v;
-    qWarning() << "WARNING: num_parameters is a read-only control.";
-}
-
-void EffectSlot::slotNumParameterSlots(double v) {
-    Q_UNUSED(v);
-    //qDebug() << debugString() << "slotNumParameterSlots" << v;
-    qWarning() << "WARNING: num_parameterslots is a read-only control.";
 }
 
 void EffectSlot::slotEnabled(double v) {
@@ -170,43 +150,53 @@ EffectButtonParameterSlotPointer EffectSlot::getEffectButtonParameterSlot(unsign
     return m_buttonParameters[slotNumber];
 }
 
-void EffectSlot::loadEffect(EffectPointer pEffect) {
-    // qDebug() << debugString() << "loadEffect"
-    //          << (pEffect ? pEffect->getManifest().name() : "(null)");
+void EffectSlot::loadEffect(EffectPointer pEffect, bool adoptMetaknobPosition) {
+    //qDebug() << debugString() << "loadEffect"
+    //         << (pEffect ? pEffect->getManifest().name() : "(null)");
     if (pEffect) {
         m_pEffect = pEffect;
-        m_pControlLoaded->setAndConfirm(1.0);
-        m_pControlNumParameters->setAndConfirm(m_pEffect->numKnobParameters());
-        m_pControlNumButtonParameters->setAndConfirm(m_pEffect->numButtonParameters());
+        m_pControlLoaded->forceSet(1.0);
+        m_pControlNumParameters->forceSet(pEffect->numKnobParameters());
+        m_pControlNumButtonParameters->forceSet(pEffect->numButtonParameters());
 
-        // Enabled is a persistent property of the effect slot, not of the
-        // effect. Propagate the current setting to the effect.
-        m_pEffect->setEnabled(m_pControlEnabled->get() > 0.0);
+        // The enabled status persists in the EffectSlot when loading a new
+        // EffectPointer to the EffectSlot. Effects and EngineEffects default to
+        // disabled, so if this EffectSlot was enabled, enable the Effect and EngineEffect.
+        pEffect->setEnabled(m_pControlEnabled->toBool());
 
-        connect(m_pEffect.data(), SIGNAL(enabledChanged(bool)),
+        connect(pEffect.data(), SIGNAL(enabledChanged(bool)),
                 this, SLOT(slotEffectEnabledChanged(bool)));
 
-        while (static_cast<unsigned int>(m_parameters.size()) < m_pEffect->numKnobParameters()) {
+        while (static_cast<unsigned int>(m_parameters.size())
+                < pEffect->numKnobParameters()) {
             addEffectParameterSlot();
         }
 
-        while (static_cast<unsigned int>(m_buttonParameters.size()) < m_pEffect->numButtonParameters()) {
+        while (static_cast<unsigned int>(m_buttonParameters.size())
+                < pEffect->numButtonParameters()) {
             addEffectButtonParameterSlot();
         }
 
-        foreach (EffectParameterSlotPointer pParameter, m_parameters) {
-            pParameter->loadEffect(m_pEffect);
+        for (const auto& pParameter : m_parameters) {
+            pParameter->loadEffect(pEffect);
+        }
+        for (const auto& pParameter : m_buttonParameters) {
+            pParameter->loadEffect(pEffect);
         }
 
-        foreach (EffectButtonParameterSlotPointer pParameter, m_buttonParameters) {
-            pParameter->loadEffect(m_pEffect);
+
+        if (adoptMetaknobPosition) {
+            slotEffectMetaParameter(m_pControlMetaParameter->get(), true);
+        } else {
+            m_pControlMetaParameter->set(pEffect->getMetaknobDefault());
+            slotEffectMetaParameter(pEffect->getMetaknobDefault(), true);
         }
 
-        emit(effectLoaded(m_pEffect, m_iEffectNumber));
+        emit(effectLoaded(pEffect, m_iEffectNumber));
     } else {
         clear();
         // Broadcasts a null effect pointer
-        emit(effectLoaded(m_pEffect, m_iEffectNumber));
+        emit(effectLoaded(EffectPointer(), m_iEffectNumber));
     }
     emit(updated());
 }
@@ -214,17 +204,17 @@ void EffectSlot::loadEffect(EffectPointer pEffect) {
 void EffectSlot::clear() {
     if (m_pEffect) {
         m_pEffect->disconnect(this);
-        m_pEffect.clear();
     }
-    m_pControlLoaded->setAndConfirm(0.0);
-    m_pControlNumParameters->setAndConfirm(0.0);
-    m_pControlNumButtonParameters->setAndConfirm(0.0);
-    foreach (EffectParameterSlotPointer pParameter, m_parameters) {
-        pParameter->loadEffect(EffectPointer());
+    m_pControlLoaded->forceSet(0.0);
+    m_pControlNumParameters->forceSet(0.0);
+    m_pControlNumButtonParameters->forceSet(0.0);
+    for (const auto& pParameter : m_parameters) {
+        pParameter->clear();
     }
-    foreach (EffectButtonParameterSlotPointer pParameter, m_buttonParameters) {
-        pParameter->loadEffect(EffectPointer());
+    for (const auto& pParameter : m_buttonParameters) {
+        pParameter->clear();
     }
+    m_pEffect.clear();
     emit(updated());
 }
 
@@ -250,18 +240,147 @@ void EffectSlot::slotEffectSelector(double v) {
 
 void EffectSlot::slotClear(double v) {
     if (v > 0) {
-        emit(clearEffect(m_iChainNumber, m_iEffectNumber, m_pEffect));
-    }
-}
-
-void EffectSlot::onChainParameterChanged(double parameter) {
-    for (int i = 0; i < m_parameters.size(); ++i) {
-        m_parameters[i]->onChainParameterChanged(parameter);
+        emit(clearEffect(m_iEffectNumber));
     }
 }
 
 void EffectSlot::syncSofttakeover() {
-    for (int i = 0; i < m_parameters.size(); ++i) {
-        m_parameters[i]->syncSofttakeover();
+    for (const auto& pParameterSlot : m_parameters) {
+        pParameterSlot->syncSofttakeover();
+    }
+}
+
+double EffectSlot::getMetaParameter() const {
+    return m_pControlMetaParameter->get();
+}
+
+// This function is for the superknob to update individual effects' meta knobs
+// slotEffectMetaParameter does not need to update m_pControlMetaParameter's value
+void EffectSlot::setMetaParameter(double v, bool force) {
+    if (!m_pSoftTakeover->ignore(m_pControlMetaParameter, v)
+            || !m_pControlEnabled->toBool()
+            || force) {
+        m_pControlMetaParameter->set(v);
+        slotEffectMetaParameter(v, force);
+    }
+}
+
+void EffectSlot::slotEffectMetaParameter(double v, bool force) {
+    // Clamp to [0.0, 1.0]
+    if (v < 0.0 || v > 1.0) {
+        qWarning() << debugString() << "value out of limits";
+        v = math_clamp(v, 0.0, 1.0);
+        m_pControlMetaParameter->set(v);
+    }
+    if (!m_pControlEnabled->toBool()) {
+        force = true;
+    }
+    for (const auto& pParameterSlot : m_parameters) {
+        pParameterSlot->onEffectMetaParameterChanged(v, force);
+    }
+}
+
+QDomElement EffectSlot::toXml(QDomDocument* doc) const {
+    QDomElement effectElement = doc->createElement(EffectXml::Effect);
+    if (!m_pEffect) {
+        return effectElement;
+    }
+
+    QDomElement metaKnobElement = doc->createElement(EffectXml::EffectMetaParameter);
+    XmlParse::addElement(*doc, effectElement,
+                         EffectXml::EffectMetaParameter,
+                         QString::number(m_pControlMetaParameter->get()));
+    EffectManifestPointer pManifest = m_pEffect->getManifest();
+    XmlParse::addElement(*doc, effectElement,
+                         EffectXml::EffectId, pManifest->id());
+    XmlParse::addElement(*doc, effectElement,
+                         EffectXml::EffectVersion, pManifest->version());
+
+    QDomElement parametersElement = doc->createElement(EffectXml::ParametersRoot);
+
+    for (const auto& pParameter : m_parameters) {
+        QDomElement parameterElement = pParameter->toXml(doc);
+        if (!parameterElement.hasChildNodes()) {
+            continue;
+        }
+        EffectManifestParameterPointer manifest = pParameter->getManifest();
+        if (!manifest) {
+            continue;
+        }
+        XmlParse::addElement(*doc, parameterElement,
+                             EffectXml::ParameterId,
+                             manifest->id());
+        parametersElement.appendChild(parameterElement);
+    }
+    for (const auto& pParameter : m_buttonParameters) {
+        QDomElement parameterElement = pParameter->toXml(doc);
+        if (!parameterElement.hasChildNodes()) {
+            continue;
+        }
+        EffectManifestParameterPointer manifest = pParameter->getManifest();
+        if (!manifest) {
+            continue;
+        }
+        XmlParse::addElement(*doc, parameterElement,
+                             EffectXml::ParameterId,
+                             pParameter->getManifest()->id());
+        parametersElement.appendChild(parameterElement);
+    }
+
+    effectElement.appendChild(parametersElement);
+
+    return effectElement;
+}
+
+void EffectSlot::loadEffectSlotFromXml(const QDomElement& effectElement) {
+    if (!m_pEffect) {
+        return;
+    }
+
+    if (!effectElement.hasChildNodes()) {
+        return;
+    }
+
+    QDomElement effectIdElement = XmlParse::selectElement(effectElement,
+                                                          EffectXml::EffectId);
+    if (m_pEffect->getManifest()->id() != effectIdElement.text()) {
+        qWarning() << "EffectSlot::loadEffectSlotFromXml"
+                   << "effect ID in XML does not match presently loaded effect, ignoring.";
+        return;
+    }
+
+    m_pControlMetaParameter->set(XmlParse::selectNodeDouble(
+            effectElement, EffectXml::EffectMetaParameter));
+    QDomElement parametersElement = XmlParse::selectElement(
+            effectElement, EffectXml::ParametersRoot);
+    if (!parametersElement.hasChildNodes()) {
+        return;
+    }
+
+    QMap<QString, EffectParameterSlotBasePointer> parametersById;
+    for (const auto& pParameter : m_parameters) {
+        EffectManifestParameterPointer manifest = pParameter->getManifest();
+        if (manifest) {
+            parametersById.insert(manifest->id(), pParameter);
+        }
+    }
+    for (const auto& pParameter : m_buttonParameters) {
+        EffectManifestParameterPointer manifest = pParameter->getManifest();
+        if (manifest) {
+            parametersById.insert(manifest->id(), pParameter);
+        }
+    }
+
+    QDomNodeList parametersNodeList = parametersElement.childNodes();
+    for (int i = 0; i < parametersNodeList.size(); ++i) {
+        QDomNode parameterNode = parametersNodeList.at(i);
+        if (parameterNode.isElement()) {
+            const QString id = XmlParse::selectNodeQString(parameterNode,
+                                                           EffectXml::ParameterId);
+            EffectParameterSlotBasePointer pParameterSlot = parametersById.value(id);
+            if (pParameterSlot != nullptr) {
+                pParameterSlot->loadParameterSlotFromXml(parameterNode.toElement());
+            }
+        }
     }
 }

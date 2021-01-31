@@ -1,18 +1,16 @@
-
-// bpmcontrol.h
-// Created 7/5/2009 by RJ Ryan (rryan@mit.edu)
-
 #ifndef BPMCONTROL_H
 #define BPMCONTROL_H
 
-#include "controlobject.h"
+#include <gtest/gtest_prod.h>
+
+#include "control/controlobject.h"
 #include "engine/enginecontrol.h"
 #include "engine/sync/syncable.h"
-#include "tapfilter.h"
+#include "util/tapfilter.h"
 
 class ControlObject;
 class ControlLinPotmeter;
-class ControlObjectSlave;
+class ControlProxy;
 class ControlPushButton;
 class EngineBuffer;
 class SyncControl;
@@ -21,11 +19,11 @@ class BpmControl : public EngineControl {
     Q_OBJECT
 
   public:
-    BpmControl(const char* _group, ConfigObject<ConfigValue>* _config);
-    virtual ~BpmControl();
+    BpmControl(QString group, UserSettingsPointer pConfig);
+    ~BpmControl() override;
 
     double getBpm() const;
-    double getFileBpm() const { return m_pFileBpm ? m_pFileBpm->get() : 0.0; }
+    double getLocalBpm() const { return m_pLocalBpm ? m_pLocalBpm->get() : 0.0; }
     // When in master sync mode, ratecontrol calls calcSyncedRate to figure out
     // how fast the track should play back.  The returned rate is usually just
     // the correct pitch to match bpms.  The usertweak argument represents
@@ -35,17 +33,14 @@ class BpmControl : public EngineControl {
     // out of sync.
     double calcSyncedRate(double userTweak);
     // Get the phase offset from the specified position.
-    double getPhaseOffset(double reference_position);
+    double getNearestPositionInPhase(double dThisPosition, bool respectLoops, bool playing);
+    double getPhaseOffset(double dThisPosition);
     double getBeatDistance(double dThisPosition) const;
-    double getPreviousSample() const { return m_dPreviousSample; }
 
-    void setCurrentSample(const double dCurrentSample, const double dTotalSamples);
-    double process(const double dRate,
-                   const double dCurrentSample,
-                   const double dTotalSamples,
-                   const int iBufferSize);
     void setTargetBeatDistance(double beatDistance);
     void setInstantaneousBpm(double instantaneousBpm);
+    void resetSyncAdjustment();
+    double updateLocalBpm();
     double updateBeatDistance();
 
     void collectFeatures(GroupFeatureState* pGroupFeatures) const;
@@ -59,8 +54,16 @@ class BpmControl : public EngineControl {
                                double* dpPrevBeat,
                                double* dpNextBeat,
                                double* dpBeatLength,
-                               double* dpBeatPercentage,
-                               const double beatEpsilon=0.0);
+                               double* dpBeatPercentage);
+
+    // Alternative version that works if the next and previous beat positions
+    // are already known.
+    static bool getBeatContextNoLookup(
+                               const double dPosition,
+                               const double dPrevBeat,
+                               const double dNextBeat,
+                               double* dpBeatLength,
+                               double* dpBeatPercentage);
 
     // Returns the shortest change in percentage needed to achieve
     // target_percentage.
@@ -69,25 +72,24 @@ class BpmControl : public EngineControl {
                                            const double& target_percentage);
 
   public slots:
-    virtual void trackLoaded(TrackPointer pTrack);
-    virtual void trackUnloaded(TrackPointer pTrack);
+    void trackLoaded(TrackPointer pNewTrack, TrackPointer pOldTrack) override;
 
   private slots:
-    void slotSetEngineBpm(double);
     void slotFileBpmChanged(double);
     void slotAdjustBeatsFaster(double);
     void slotAdjustBeatsSlower(double);
     void slotTranslateBeatsEarlier(double);
     void slotTranslateBeatsLater(double);
-    void slotControlPlay(double);
     void slotControlBeatSync(double);
     void slotControlBeatSyncPhase(double);
     void slotControlBeatSyncTempo(double);
     void slotTapFilter(double,int);
     void slotBpmTap(double);
-    void slotAdjustRateSlider();
+    void slotUpdateRateSlider();
+    void slotUpdateEngineBpm();
     void slotUpdatedTrackBeats();
     void slotBeatsTranslate(double);
+    void slotBeatsTranslateMatchAlignment(double);
 
   private:
     SyncMode getSyncMode() const {
@@ -95,24 +97,33 @@ class BpmControl : public EngineControl {
     }
     bool syncTempo();
     double calcSyncAdjustment(double my_percentage, bool userTweakingSync);
+    double calcRateRatio() const;
 
     friend class SyncControl;
 
     // ControlObjects that come from EngineBuffer
-    ControlObjectSlave* m_pPlayButton;
-    ControlObjectSlave* m_pReverseButton;
-    ControlObjectSlave* m_pRateSlider;
+    ControlProxy* m_pPlayButton;
+    QAtomicInt m_oldPlayButton;
+    ControlProxy* m_pReverseButton;
+    ControlProxy* m_pRateSlider;
     ControlObject* m_pQuantize;
-    ControlObjectSlave* m_pRateRange;
-    ControlObjectSlave* m_pRateDir;
+    ControlProxy* m_pRateRange;
+    ControlProxy* m_pRateDir;
+
+    // ControlObjects that come from QuantizeControl
+    QScopedPointer<ControlProxy> m_pNextBeat;
+    QScopedPointer<ControlProxy> m_pPrevBeat;
+    QScopedPointer<ControlProxy> m_pClosestBeat;
 
     // ControlObjects that come from LoopingControl
-    ControlObjectSlave* m_pLoopEnabled;
-    ControlObjectSlave* m_pLoopStartPosition;
-    ControlObjectSlave* m_pLoopEndPosition;
+    ControlProxy* m_pLoopEnabled;
+    ControlProxy* m_pLoopStartPosition;
+    ControlProxy* m_pLoopEndPosition;
 
     // The current loaded file's detected BPM
     ControlObject* m_pFileBpm;
+    // The average bpm around the current playposition;
+    ControlObject* m_pLocalBpm;
     ControlPushButton* m_pAdjustBeatsFaster;
     ControlPushButton* m_pAdjustBeatsSlower;
     ControlPushButton* m_pTranslateBeatsEarlier;
@@ -132,16 +143,17 @@ class BpmControl : public EngineControl {
     // Button that translates the beats so the nearest beat is on the current
     // playposition.
     ControlPushButton* m_pTranslateBeats;
-
-    double m_dPreviousSample;
+    // Button that translates beats to match another playing deck
+    ControlPushButton* m_pBeatsTranslateMatchAlignment;
 
     // Master Sync objects and values.
     ControlObject* m_pSyncMode;
-    ControlObjectSlave* m_pThisBeatDistance;
+    ControlProxy* m_pThisBeatDistance;
     double m_dSyncTargetBeatDistance;
     double m_dSyncInstantaneousBpm;
     double m_dLastSyncAdjustment;
     bool m_resetSyncAdjustment;
+    FRIEND_TEST(EngineSyncTest, UserTweakBeatDistance);
     double m_dUserOffset;
 
     TapFilter m_tapFilter;

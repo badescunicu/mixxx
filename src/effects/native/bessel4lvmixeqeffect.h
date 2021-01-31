@@ -3,38 +3,41 @@
 
 #include <QMap>
 
-#include "controlobjectslave.h"
+#include "control/controlproxy.h"
 #include "effects/effect.h"
 #include "effects/effectprocessor.h"
+#include "effects/native/lvmixeqbase.h"
 #include "engine/effects/engineeffect.h"
 #include "engine/effects/engineeffectparameter.h"
 #include "engine/enginefilterbessel4.h"
 #include "engine/enginefilterdelay.h"
-#include "util.h"
+#include "util/class.h"
 #include "util/types.h"
 #include "util/defs.h"
-#include "sampleutil.h"
-#include "lvmixeqbase.h"
 
 class Bessel4LVMixEQEffectGroupState :
         public LVMixEQEffectGroupState<EngineFilterBessel4Low> {
+  public:
+      Bessel4LVMixEQEffectGroupState(const mixxx::EngineParameters& bufferParameters)
+          : LVMixEQEffectGroupState<EngineFilterBessel4Low>(bufferParameters) {
+      }
 };
 
-class Bessel4LVMixEQEffect : public GroupEffectProcessor<Bessel4LVMixEQEffectGroupState> {
+class Bessel4LVMixEQEffect : public EffectProcessorImpl<Bessel4LVMixEQEffectGroupState> {
   public:
-    Bessel4LVMixEQEffect(EngineEffect* pEffect, const EffectManifest& manifest);
+    Bessel4LVMixEQEffect(EngineEffect* pEffect);
     virtual ~Bessel4LVMixEQEffect();
 
     static QString getId();
-    static EffectManifest getManifest();
+    static EffectManifestPointer getManifest();
 
     // See effectprocessor.h
-    void processGroup(const QString& group,
-                      Bessel4LVMixEQEffectGroupState* pState,
-                      const CSAMPLE* pInput, CSAMPLE* pOutput,
-                      const unsigned int numSamples,
-                      const unsigned int sampleRate,
-                      const GroupFeatureState& groupFeatureState);
+    void processChannel(const ChannelHandle& handle,
+                        Bessel4LVMixEQEffectGroupState* pState,
+                        const CSAMPLE* pInput, CSAMPLE* pOutput,
+                        const mixxx::EngineParameters& bufferParameters,
+                        const EffectEnableState enableState,
+                        const GroupFeatureState& groupFeatureState);
 
   private:
     QString debugString() const {
@@ -49,8 +52,8 @@ class Bessel4LVMixEQEffect : public GroupEffectProcessor<Bessel4LVMixEQEffectGro
     EngineEffectParameter* m_pKillMid;
     EngineEffectParameter* m_pKillHigh;
 
-    ControlObjectSlave* m_pLoFreqCorner;
-    ControlObjectSlave* m_pHiFreqCorner;
+    ControlProxy* m_pLoFreqCorner;
+    ControlProxy* m_pHiFreqCorner;
 
     DISALLOW_COPY_AND_ASSIGN(Bessel4LVMixEQEffect);
 };

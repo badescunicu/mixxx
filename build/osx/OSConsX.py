@@ -119,7 +119,12 @@ def build_dmg(target, source, env):
         system('SetFile -a C "%s"' % dmg) #is there an sconsey way to declare this? Would be nice so that it could write what
 
 
-    if system("hdiutil create -srcfolder %s -format UDBZ -ov -volname %s %s" % (dmg, env['VOLNAME'], target)):
+    # TODO(rryan): hdiutil has a bug where if srcfolder is greater than 100M it
+    # fails to create a DMG with error -5341. The actual size of the resulting
+    # DMG is not affected by the -size parameter -- I think it's just the size
+    # of the "partition" in the DMG. Hard-coding 150M is a band-aid to get the
+    # build working again while we figure out the right solution.
+    if system("hdiutil create -size 150M -srcfolder %s -format UDBZ -ov -volname %s %s" % (dmg, env['VOLNAME'], target)):
         raise Exception("hdiutil create failed")
 
     shutil.rmtree(dmg)
@@ -278,7 +283,7 @@ def build_app(target, source, env):
 
 
     print "Installing embedded libs:"
-    for ref, (abs, embedded) in locals.iteritems():
+    for ref, (abs, embedded) in locals.items():
         real_abs = os.path.realpath(abs)
         print "installing", real_abs, "to", embedded
         # NOTE(rryan): abs can be a symlink. we want to copy the binary it is
@@ -399,6 +404,8 @@ def emit_app(target, source, env):
                   'CFBundleVersion': bundle_version,
                   'CFBundleShortVersionString': bundle_short_version_string,
                   'NSHumanReadableCopyright': human_readable_copyright,
+                  'NSPrincipalClass': 'NSApplication',
+                  'NSHighResolutionCapable': 'True',
                   'LSApplicationCategoryType': application_category_type,
                   'LSMinimumSystemVersion': minimum_osx_version}
     if env['FOR_APP_STORE']:
@@ -431,7 +438,7 @@ def emit_app(target, source, env):
             target = Dir(os.path.join(str(target), path))
         if isinstance(i, SCons.Node.FS.Dir):
             InstallDir(target, i, env)
-        elif isinstance(i, SCons.Node.FS.File) or isinstance(i, basestring):
+        elif isinstance(i, SCons.Node.FS.File) or isinstance(i, str):
             env.Install(target, i)
 
     plugins = env['PLUGINS']
@@ -515,7 +522,7 @@ def build_plist(target, source, env):
     </plist>"""
     inner_template = """<key>%s</key><string>%s</string>"""
 
-    inner = str.join('\n', [inner_template % (k,v) for k,v in d.iteritems()])
+    inner = str.join('\n', [inner_template % (k,v) for k,v in d.items()])
     plist = outer_template % inner
 
     f = open(str(target), "w")

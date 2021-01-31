@@ -1,88 +1,111 @@
 #include "widget/wimagestore.h"
 
 #include <QtDebug>
+#include <QSvgRenderer>
+#include <QPainter>
+
+#include "skin/imgloader.h"
+#include "util/assert.h"
+
 
 // static
-QHash<QString, WImageStore::ImageInfoType*> WImageStore::m_dictionary;
-QSharedPointer<ImgSource> WImageStore::m_loader = QSharedPointer<ImgSource>();
+QHash<QString, std::weak_ptr<QImage> > WImageStore::m_dictionary;
+QSharedPointer<ImgSource> WImageStore::m_loader
+        = QSharedPointer<ImgSource>(new ImgLoader());
 
 // static
-QImage * WImageStore::getImage(const QString &fileName) {
+QImage* WImageStore::getImageNoCache(const QString& fileName, double scaleFactor) {
+    return getImageNoCache(PixmapSource(fileName), scaleFactor);
+}
+
+// static
+std::shared_ptr<QImage> WImageStore::getImage(const QString& fileName, double scaleFactor) {
+    return getImage(PixmapSource(fileName), scaleFactor);
+}
+
+// static
+std::shared_ptr<QImage> WImageStore::getImage(const PixmapSource& source, double scaleFactor) {
+    if (source.isEmpty()) {
+        return nullptr;
+    }
     // Search for Image in list
-    ImageInfoType* info = NULL;
+    QString key = source.getId() + QString::number(scaleFactor);
 
-    QHash<QString, ImageInfoType*>::iterator it = m_dictionary.find(fileName);
+    QHash<QString, std::weak_ptr<QImage> >::iterator it = m_dictionary.find(key);
     if (it != m_dictionary.end()) {
-        info = it.value();
-        info->instCount++;
-        //qDebug() << "WImageStore returning cached Image for:" << fileName;
-        return info->image;
+        //qDebug() << "WImageStore returning cached Image for:" << source.getPath();
+        return it.value().lock();
     }
 
     // Image wasn't found, construct it
-    //qDebug() << "WImageStore Loading Image from file" << fileName;
+    //qDebug() << "WImageStore Loading Image from file" << source.getPath();
 
-    QImage* loadedImage = getImageNoCache(fileName);
+    auto pLoadedImage = std::shared_ptr<QImage>(getImageNoCache(source, scaleFactor), &deleteImage);
 
-    if (loadedImage == NULL) {
-        return NULL;
+    if (!pLoadedImage) {
+        return nullptr;
     }
 
-
-    if (loadedImage->isNull()) {
-        qDebug() << "WImageStore couldn't load:" << fileName << (loadedImage == NULL);
-        delete loadedImage;
-        return NULL;
+    if (pLoadedImage->isNull()) {
+        qDebug() << "WImageStore couldn't load:" << source.getPath() << (pLoadedImage == nullptr);
+        return nullptr;
     }
 
-    info = new ImageInfoType;
-    info->image = loadedImage;
-    info->instCount = 1;
-    m_dictionary.insert(fileName, info);
-    return info->image;
+    m_dictionary.insert(key, pLoadedImage);
+    return pLoadedImage;
 }
 
 // static
-QImage * WImageStore::getImageNoCache(const QString& fileName) {
-    QImage* pImage;
-    if (m_loader) {
-        pImage = m_loader->getImage(fileName);
-    } else {
-        pImage = new QImage(fileName);
-    }
-    return pImage;
-}
+QImage* WImageStore::getImageNoCache(const PixmapSource& source, double scaleFactor) {
+    if (source.isSVG()) {
+        QSvgRenderer renderer;
 
-// static
-void WImageStore::deleteImage(QImage * p)
-{
-    // Search for Image in list
-    ImageInfoType *info = NULL;
-    QMutableHashIterator<QString, ImageInfoType*> it(m_dictionary);
-
-    while (it.hasNext())
-    {
-        info = it.next().value();
-        if (p == info->image)
-        {
-            info->instCount--;
-            if (info->instCount<1)
-            {
-                it.remove();
-                delete info->image;
-                delete info;
+        if (!source.getSvgSourceData().isEmpty()) {
+            // Call here the different overload for svg content
+            if (!renderer.load(source.getSvgSourceData())) {
+                // The above line already logs a warning
+                return nullptr;
             }
-            break;
+        } else if (!source.getPath().isEmpty()) {
+            if (!renderer.load(source.getPath())) {
+                // The above line already logs a warning
+                return nullptr;
+            }
+        } else {
+            return nullptr;
+        }
+
+        auto pImage = new QImage(renderer.defaultSize() * scaleFactor,
+                            QImage::Format_ARGB32);
+        pImage->fill(0x00000000);  // Transparent black.
+        QPainter painter(pImage);
+        renderer.render(&painter);
+        return pImage;
+    } else {
+        return m_loader->getImage(source.getPath(), scaleFactor);
+    }
+}
+
+// static
+void WImageStore::deleteImage(QImage* p) {
+    QMutableHashIterator<QString, std::weak_ptr<QImage> >it(m_dictionary);
+    while (it.hasNext()) {
+        if(it.next().value().expired()) {
+            it.remove();
         }
     }
+    delete p;
 }
 
 // static
 void WImageStore::correctImageColors(QImage* p) {
-    if (m_loader) {
-        m_loader->correctImageColors(p);
-    }
+    m_loader->correctImageColors(p);
 }
+
+// static
+bool WImageStore::willCorrectColors() {
+    return m_loader->willCorrectColors();
+};
 
 // static
 void WImageStore::setLoader(QSharedPointer<ImgSource> ld) {

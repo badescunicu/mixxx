@@ -3,35 +3,35 @@
 
 #include <QMap>
 
-#include "controlobjectslave.h"
+#include "control/controlproxy.h"
 #include "effects/effect.h"
 #include "effects/effectprocessor.h"
 #include "engine/effects/engineeffect.h"
 #include "engine/effects/engineeffectparameter.h"
 #include "engine/enginefilterlinkwitzriley8.h"
-#include "util.h"
-#include "util/types.h"
+#include "util/class.h"
 #include "util/defs.h"
-#include "sampleutil.h"
+#include "util/sample.h"
+#include "util/types.h"
 
-class LinkwitzRiley8EQEffectGroupState {
+class LinkwitzRiley8EQEffectGroupState : public EffectState {
   public:
-    LinkwitzRiley8EQEffectGroupState();
+    LinkwitzRiley8EQEffectGroupState(const mixxx::EngineParameters& bufferParameters);
     virtual ~LinkwitzRiley8EQEffectGroupState();
 
     void setFilters(int sampleRate, int lowFreq, int highFreq);
 
-    EngineFilterLinkwtzRiley8Low* m_low1;
-    EngineFilterLinkwtzRiley8High* m_high1;
-    EngineFilterLinkwtzRiley8Low* m_low2;
-    EngineFilterLinkwtzRiley8High* m_high2;
+    EngineFilterLinkwitzRiley8Low* m_low1;
+    EngineFilterLinkwitzRiley8High* m_high1;
+    EngineFilterLinkwitzRiley8Low* m_low2;
+    EngineFilterLinkwitzRiley8High* m_high2;
 
     double old_low;
     double old_mid;
     double old_high;
 
     CSAMPLE* m_pLowBuf;
-    CSAMPLE* m_pBandBuf;
+    CSAMPLE* m_pMidBuf;
     CSAMPLE* m_pHighBuf;
 
     unsigned int m_oldSampleRate;
@@ -39,21 +39,21 @@ class LinkwitzRiley8EQEffectGroupState {
     int m_hiFreq;
 };
 
-class LinkwitzRiley8EQEffect : public GroupEffectProcessor<LinkwitzRiley8EQEffectGroupState> {
+class LinkwitzRiley8EQEffect : public EffectProcessorImpl<LinkwitzRiley8EQEffectGroupState> {
   public:
-    LinkwitzRiley8EQEffect(EngineEffect* pEffect, const EffectManifest& manifest);
+    LinkwitzRiley8EQEffect(EngineEffect* pEffect);
     virtual ~LinkwitzRiley8EQEffect();
 
     static QString getId();
-    static EffectManifest getManifest();
+    static EffectManifestPointer getManifest();
 
     // See effectprocessor.h
-    void processGroup(const QString& group,
-                      LinkwitzRiley8EQEffectGroupState* pState,
-                      const CSAMPLE* pInput, CSAMPLE *pOutput,
-                      const unsigned int numSamples,
-                      const unsigned int sampleRate,
-                      const GroupFeatureState& groupFeatureState);
+    void processChannel(const ChannelHandle& handle,
+                        LinkwitzRiley8EQEffectGroupState* pState,
+                        const CSAMPLE* pInput, CSAMPLE *pOutput,
+                        const mixxx::EngineParameters& bufferParameters,
+                        const EffectEnableState enableState,
+                        const GroupFeatureState& groupFeatureState);
 
   private:
     QString debugString() const {
@@ -68,8 +68,8 @@ class LinkwitzRiley8EQEffect : public GroupEffectProcessor<LinkwitzRiley8EQEffec
     EngineEffectParameter* m_pKillMid;
     EngineEffectParameter* m_pKillHigh;
 
-    ControlObjectSlave* m_pLoFreqCorner;
-    ControlObjectSlave* m_pHiFreqCorner;
+    ControlProxy* m_pLoFreqCorner;
+    ControlProxy* m_pHiFreqCorner;
 
     DISALLOW_COPY_AND_ASSIGN(LinkwitzRiley8EQEffect);
 };

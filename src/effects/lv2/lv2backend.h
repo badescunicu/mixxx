@@ -12,11 +12,10 @@ class LV2Backend : public EffectsBackend {
     virtual ~LV2Backend();
 
     void enumeratePlugins();
-    const QSet<QString> getEffectIds() const;
+    const QList<QString> getEffectIds() const;
     const QSet<QString> getDiscoveredPluginIds() const;
-    EffectManifest getManifest(const QString& effectId) const;
+    EffectManifestPointer getManifest(const QString& effectId) const;
     LV2Manifest* getLV2Manifest(const QString& effectId) const;
-    EffectManifest& getManifestReference(const QString& effectId);
     bool canInstantiateEffect(const QString& effectId) const;
     EffectPointer instantiateEffect(EffectsManager* pEffectsManager,
                                     const QString& effectId);

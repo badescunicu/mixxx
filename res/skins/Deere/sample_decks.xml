@@ -4,102 +4,98 @@
     Sample deck container widget.
 -->
 <Template>
+  <SingletonDefinition>
+    <ObjectName>SamplerRow1</ObjectName>
+    <Children>
+      <Template src="skin:sampler_row.xml">
+        <SetVariable name="row">1</SetVariable>
+        <SetVariable name="1">1</SetVariable>
+        <SetVariable name="2">2</SetVariable>
+        <SetVariable name="3">3</SetVariable>
+        <SetVariable name="4">4</SetVariable>
+        <SetVariable name="5">5</SetVariable>
+        <SetVariable name="6">6</SetVariable>
+        <SetVariable name="7">7</SetVariable>
+        <SetVariable name="8">8</SetVariable>
+      </Template>
+    </Children>
+  </SingletonDefinition>
+
+  <SingletonDefinition>
+    <ObjectName>SamplerRow2</ObjectName>
+    <Children>
+      <Template src="skin:sampler_row.xml">
+        <SetVariable name="row">2</SetVariable>
+        <SetVariable name="1">9</SetVariable>
+        <SetVariable name="2">10</SetVariable>
+        <SetVariable name="3">11</SetVariable>
+        <SetVariable name="4">12</SetVariable>
+        <SetVariable name="5">13</SetVariable>
+        <SetVariable name="6">14</SetVariable>
+        <SetVariable name="7">15</SetVariable>
+        <SetVariable name="8">16</SetVariable>
+      </Template>
+    </Children>
+  </SingletonDefinition>
+
   <WidgetGroup>
+    <Connection>
+      <ConfigKey>[Samplers],show_samplers</ConfigKey>
+      <BindProperty>visible</BindProperty>
+    </Connection>
     <Layout>vertical</Layout>
     <!-- I don't now why this works but a WidgetGroup wrapper around a
          WidgetStack with a 'fixed' size policy makes the group track the
          minimum size of the current stack widget. -->
     <SizePolicy>me,f</SizePolicy>
-
     <Children>
-      <WidgetStack>
+      <!-- Although the minimum size is now tracked correctly, the border
+          applied via qss is not added to child widgets size but substracted
+          from the WidgetStack's usable height.
+          Creating the border with fixed-size WidgetGroups solves this. -->
+      <WidgetGroup><Size>-1me,2f</Size></WidgetGroup>
+
+      <WidgetStack currentpage="[Deere],sampler_row_current" persist="true">
         <ObjectName>SampleDecksContainer</ObjectName>
-        <SizePolicy>me,min</SizePolicy>
+        <NextControl>[Deere],sampler_row_next</NextControl>
+        <PrevControl>[Deere],sampler_row_prev</PrevControl>
         <Children>
 
-          <!-- Collapsed SampleDecks -->
-          <WidgetGroup>
-            <ObjectName>SampleDecksCollapsed</ObjectName>
-            <Layout>horizontal</Layout>
+          <WidgetGroup trigger="[Deere],sampler_row_1">
+            <ObjectName>SamplerRows</ObjectName>
+            <Layout>vertical</Layout>
             <SizePolicy>me,min</SizePolicy>
             <Children>
-              <Template src="skin:hide_show_button.xml">
-                <SetVariable name="object_name">SampleDeckToggle</SetVariable>
-                <SetVariable name="control">[Samplers],show_samplers</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">1</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">2</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">3</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">4</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">5</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">6</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">7</SetVariable>
-              </Template>
-              <Template src="skin:sampler_simple.xml">
-                <SetVariable name="i">8</SetVariable>
-              </Template>
+
+              <SingletonContainer>
+                <ObjectName>SamplerRow1</ObjectName>
+              </SingletonContainer>
+
             </Children>
           </WidgetGroup>
 
-          <!-- Expanded SampleDecks -->
-          <WidgetGroup trigger="[Samplers],show_samplers">
-            <ObjectName>SampleDecksExpanded</ObjectName>
+          <WidgetGroup trigger="[Deere],sampler_row_2">
+            <ObjectName>SamplerRows</ObjectName>
+            <Layout>vertical</Layout>
             <SizePolicy>me,min</SizePolicy>
-            <Layout>horizontal</Layout>
             <Children>
-              <Template src="skin:hide_show_button.xml">
-                <SetVariable name="object_name">SampleDeckToggle</SetVariable>
-                <SetVariable name="control">[Samplers],show_samplers</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">1</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">2</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">3</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">4</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">5</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">6</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">7</SetVariable>
-              </Template>
-              <Template src="skin:sampler.xml">
-                <SetVariable name="i">8</SetVariable>
-              </Template>
+
+              <SingletonContainer>
+                <ObjectName>SamplerRow1</ObjectName>
+              </SingletonContainer>
+
+              <SingletonContainer>
+                <ObjectName>SamplerRow2</ObjectName>
+              </SingletonContainer>
+
             </Children>
           </WidgetGroup>
+
         </Children>
       </WidgetStack>
+
+      <WidgetGroup><Size>-1me,2f</Size></WidgetGroup>
+
     </Children>
-    <Connection>
-      <ConfigKey persist="true">[Master],show_library</ConfigKey>
-      <BindProperty>visible</BindProperty>
-      <Transform>
-        <Invert/>
-        <Add>1</Add>
-      </Transform>
-    </Connection>
   </WidgetGroup>
 </Template>

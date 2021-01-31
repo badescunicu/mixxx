@@ -1,46 +1,48 @@
 #include <QtDebug>
 
-#include "controleffectknob.h"
+#include "control/controleffectknob.h"
 #include "effects/effectbuttonparameterslot.h"
-#include "controlobject.h"
-#include "controlpushbutton.h"
+#include "effects/effectxmlelements.h"
+#include "control/controlobject.h"
+#include "control/controlpushbutton.h"
 #include "util/math.h"
+#include "util/xml.h"
 
-EffectButtonParameterSlot::EffectButtonParameterSlot(const unsigned int iRackNumber,
-                                         const unsigned int iChainNumber,
-                                         const unsigned int iSlotNumber,
-                                         const unsigned int iParameterSlotNumber)
-        : EffectParameterSlotBase(iRackNumber, iChainNumber, iSlotNumber,
+EffectButtonParameterSlot::EffectButtonParameterSlot(const QString& group,
+                                                     const unsigned int iParameterSlotNumber)
+        : EffectParameterSlotBase(group,
                                   iParameterSlotNumber) {
     QString itemPrefix = formatItemPrefix(iParameterSlotNumber);
     m_pControlLoaded = new ControlObject(
-        ConfigKey(m_group, itemPrefix + QString("_loaded")));
+            ConfigKey(m_group, itemPrefix + QString("_loaded")));
     m_pControlValue = new ControlPushButton(
-        ConfigKey(m_group, itemPrefix));
+            ConfigKey(m_group, itemPrefix));
     m_pControlValue->setButtonMode(ControlPushButton::POWERWINDOW);
     m_pControlType = new ControlObject(
-        ConfigKey(m_group, itemPrefix + QString("_type")));
+            ConfigKey(m_group, itemPrefix + QString("_type")));
 
     connect(m_pControlValue, SIGNAL(valueChanged(double)),
             this, SLOT(slotValueChanged(double)));
 
     // Read-only controls.
-    m_pControlType->connectValueChangeRequest(
-        this, SLOT(slotValueType(double)));
-    m_pControlLoaded->connectValueChangeRequest(
-        this, SLOT(slotLoaded(double)));
+    m_pControlType->setReadOnly();
+    m_pControlLoaded->setReadOnly();
 
     clear();
 }
 
 EffectButtonParameterSlot::~EffectButtonParameterSlot() {
     //qDebug() << debugString() << "destroyed";
+    // m_pControlLoaded and m_pControlType are deleted by ~EffectParameterSlotBase
     delete m_pControlValue;
 }
 
 void EffectButtonParameterSlot::loadEffect(EffectPointer pEffect) {
     //qDebug() << debugString() << "loadEffect" << (pEffect ? pEffect->getManifest().name() : "(null)");
-    clear();
+    if (m_pEffectParameter) {
+        clear();
+    }
+
     if (pEffect) {
         m_pEffect = pEffect;
         // Returns null if it doesn't have a parameter for that number
@@ -48,7 +50,7 @@ void EffectButtonParameterSlot::loadEffect(EffectPointer pEffect) {
 
         if (m_pEffectParameter) {
             // Set the number of states
-            int numStates = math_max(m_pEffectParameter->manifest().getSteps().size(), 2);
+            int numStates = math_max(m_pEffectParameter->manifest()->getSteps().size(), 2);
             m_pControlValue->setStates(numStates);
             //qDebug() << debugString() << "Loading effect parameter" << m_pEffectParameter->name();
             double dValue = m_pEffectParameter->getValue();
@@ -72,9 +74,9 @@ void EffectButtonParameterSlot::loadEffect(EffectPointer pEffect) {
             m_pControlValue->setDefaultValue(dDefault);
             EffectManifestParameter::ControlHint type = m_pEffectParameter->getControlHint();
             // TODO(rryan) expose this from EffectParameter
-            m_pControlType->setAndConfirm(static_cast<double>(type));
+            m_pControlType->forceSet(static_cast<double>(type));
             // Default loaded parameters to loaded and unlinked
-            m_pControlLoaded->setAndConfirm(1.0);
+            m_pControlLoaded->forceSet(1.0);
 
             connect(m_pEffectParameter, SIGNAL(valueChanged(double)),
                     this, SLOT(slotParameterValueChanged(double)));
@@ -91,10 +93,10 @@ void EffectButtonParameterSlot::clear() {
     }
 
     m_pEffect.clear();
-    m_pControlLoaded->setAndConfirm(0.0);
+    m_pControlLoaded->forceSet(0.0);
     m_pControlValue->set(0.0);
     m_pControlValue->setDefaultValue(0.0);
-    m_pControlType->setAndConfirm(0.0);
+    m_pControlType->forceSet(0.0);
     emit(updated());
 }
 
@@ -106,5 +108,38 @@ void EffectButtonParameterSlot::slotParameterValueChanged(double value) {
 void EffectButtonParameterSlot::slotValueChanged(double v) {
     if (m_pEffectParameter) {
         m_pEffectParameter->setValue(v);
+    }
+}
+
+QDomElement EffectButtonParameterSlot::toXml(QDomDocument* doc) const {
+    QDomElement parameterElement;
+    if (m_pEffectParameter != nullptr) {
+        parameterElement = doc->createElement(EffectXml::Parameter);
+        XmlParse::addElement(*doc, parameterElement,
+                             EffectXml::ParameterValue,
+                             QString::number(m_pControlValue->get()));
+    }
+
+    return parameterElement;
+}
+
+void EffectButtonParameterSlot::loadParameterSlotFromXml(const QDomElement&
+                                                  parameterElement) {
+    if (m_pEffectParameter == nullptr) {
+        return;
+    }
+    if (!parameterElement.hasChildNodes()) {
+        m_pControlValue->reset();
+    } else {
+        bool conversionWorked = false;
+        double value = XmlParse::selectNodeDouble(parameterElement,
+                                                  EffectXml::ParameterValue,
+                                                  &conversionWorked);
+        if (conversionWorked) {
+            // Need to use setParameterFrom(..., nullptr) here to
+            // trigger valueChanged() signal emission and execute slotValueChanged()
+            m_pControlValue->setParameterFrom(value, nullptr);
+        }
+        // If the conversion failed, the default value is kept.
     }
 }
